@@ -1,0 +1,8 @@
+{
+  "domain": "voice2json",
+  "name": "voice2json",
+  "documentation": "https://www.home-assistant.io/integrations/voice2json",
+  "requirements": ["pydash"],
+  "dependencies": [],
+  "codeowners": []
+}
