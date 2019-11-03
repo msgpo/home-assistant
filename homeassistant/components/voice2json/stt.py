@@ -54,7 +54,7 @@ PROFILE_LANGUAGES = {
     "fr_pocketsphinx-cmu": "fr-FR",
     "de_pocketsphinx-cmu": "de-DE",
     "de_kaldi-zamia": "de-DE",
-    "el-GR": "el_pocketsphinx-cmu",
+    "el_pocketsphinx-cmu": "el-GR",
     "it_pocketsphinx-cmu": "it-IT",
     "pt-br_pocketsphinx-cmu": "pt-BR",
     "ru_pocketsphinx-cmu": "ru-RU",
@@ -189,14 +189,10 @@ class Voice2JsonSTTProvider(Provider):
         self.profile_dir = self.voice2json_dir / "profiles" / self.profile_name
 
         # Path to voice2json executable script
-        self.voice2json_exe = (
-            self.voice2json_dir / "voice2json" / "bin" / "voice2json"
-        )
+        self.voice2json_exe = self.voice2json_dir / "voice2json" / "bin" / "voice2json"
 
         # Path to voice2json base directory
-        self.voice2json_dir = (
-            self.voice2json_dir / "voice2json" / "lib" / "voice2json"
-        )
+        self.voice2json_dir = self.voice2json_dir / "voice2json" / "lib" / "voice2json"
 
         # closed, open, or mixed
         self.transcription_mode = conf.get(
@@ -225,7 +221,9 @@ class Voice2JsonSTTProvider(Provider):
     async def async_initialize(self):
         """Initialize provider."""
         # Fix word casing according to profile
-        word_casing = pydash.get(self.voice2json_profile, "training.word-casing", "ignore")
+        word_casing = pydash.get(
+            self.voice2json_profile, "training.word-casing", "ignore"
+        )
         if word_casing == "upper":
             self.word_transform = lambda w: w.upper()
         elif word_casing == "lower":
