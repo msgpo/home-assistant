@@ -1,0 +1,486 @@
+"""Support for Rhasspy integration."""
+import io
+import logging
+import threading
+import time
+from urllib.parse import urljoin
+
+import requests
+import voluptuous as vol
+
+import homeassistant.helpers.config_validation as cv
+from homeassistant.core import Event, callback
+from homeassistant.const import EVENT_COMPONENT_LOADED
+from homeassistant.helpers import intent
+from homeassistant.components.conversation import async_set_agent
+from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
+
+from .const import DOMAIN, SUPPORT_LANGUAGES
+from .conversation import RhasspyConversationAgent
+
+
+# -----------------------------------------------------------------------------
+
+_LOGGER = logging.getLogger(__name__)
+
+# Base URL of Rhasspy web server
+CONF_WEB_URL = "web_url"
+
+# Language to use for generating default utterances
+CONF_LANGUAGE = "language"
+
+# User defined utterances by intent
+CONF_INTENTS = "intents"
+
+# User defined slots and values
+CONF_SLOTS = "slots"
+
+# User defined words and pronunciations
+CONF_CUSTOM_WORDS = "custom_words"
+
+# Automatically generate turn on/off and toggle utterances for all entities with
+# friendly names.
+CONF_GENERATE_UTTERANCES = "generate_utterances"
+
+# If True, Rhasspy conversation agent is registered
+CONF_REGISTER_CONVERSATION = "register_conversation"
+
+# List of entity ids by intent to generate uttrances for
+CONF_INTENT_ENTITIES = "intent_entities"
+
+# List of Home Assistant domains by intent to generate utterances for
+CONF_INTENT_DOMAINS = "intent_domains"
+
+# List of state names by intent to consider as matches
+CONF_INTENT_STATES = "intent_states"
+
+# List of format strings by intent.
+# Used to automatically generate utterances.
+CONF_UTTERANCE_TEMPLATES = "utterance_templates"
+
+# Default settings
+DEFAULT_WEB_URL = "http://localhost:12101"
+DEFAULT_LANGUAGE = "en-US"
+DEFAULT_GENERATE_UTTERANCES = True
+DEFAULT_REGISTER_CONVERSATION = True
+
+# Custom intents
+INTENT_IS_DEVICE_ON = "IsDeviceOn"
+INTENT_IS_DEVICE_OFF = "IsDeviceOff"
+
+INTENT_IS_COVER_OPEN = "IsCoverOpen"
+INTENT_IS_COVER_CLOSED = "IsCoverClosed"
+
+INTENT_DEVICE_STATE = "DeviceState"
+
+# TODO: Translate to all supported languages
+DEFAULT_UTTERANCES = {
+    "en-US": {
+        # Built-in intents
+        intent.INTENT_TURN_ON: [
+            "turn on [the|a|an] ({name}){{name}}",
+            "turn [the|a|an] ({name}){{name}} on",
+        ],
+        intent.INTENT_TURN_OFF: [
+            "turn off [the|a|an] ({name}){{name}}",
+            "turn [the|a|an] ({name}){{name}} off",
+        ],
+        intent.INTENT_TOGGLE: [
+            "toggle [the|a|an] ({name}){{name}}",
+            "[the|a|an] ({name}){{name}} toggle",
+        ],
+        INTENT_OPEN_COVER: [
+            "open [the|a|an] ({name}){{name}}",
+            "[the|a|an] ({name}){{name}} open",
+        ],
+        INTENT_CLOSE_COVER: [
+            "close [the|a|an] ({name}){{name}}",
+            "[the|a|an] ({name}){{name}} close",
+        ],
+        # Custom intents
+        INTENT_IS_DEVICE_ON: ["(is | are) [the|a|an] ({name}){{name}} on"],
+        INTENT_IS_DEVICE_OFF: ["(is | are) [the|a|an] ({name}){{name}} off"],
+        INTENT_DEVICE_STATE: [
+            "what (is | are) [the|a|an] (state | states) of [the|a|an] ({name}){{name}}",
+            "what [is | are] [the|a|an] ({name}){{name}} (state | states)",
+        ],
+        INTENT_IS_COVER_OPEN: ["(is | are) [the|a|an] ({name}){{name}} open"],
+        INTENT_IS_COVER_CLOSED: ["(is | are) [the|a|an] ({name}){{name}} closed"],
+    }
+}
+
+DEFAULT_INTENT_ENTITIES = {
+    intent.INTENT_TURN_ON: ["group.all_lights", "group.all_switches"],
+    intent.INTENT_TURN_OFF: ["group.all_lights", "group.all_switches"],
+    intent.INTENT_TOGGLE: ["group.all_lights", "group.all_switches"],
+    INTENT_IS_DEVICE_ON: ["group.all_lights", "group.all_switches"],
+    INTENT_IS_DEVICE_OFF: ["group.all_lights", "group.all_switches"],
+    INTENT_DEVICE_STATE: ["group.all_lights", "group.all_switches", "group.all_covers"],
+    INTENT_OPEN_COVER: ["group.all_covers"],
+    INTENT_CLOSE_COVER: ["group.all_covers"],
+    INTENT_IS_COVER_OPEN: ["group.all_covers"],
+    INTENT_IS_COVER_CLOSED: ["group.all_covers"],
+}
+
+DEFAULT_INTENT_DOMAINS = {
+    intent.INTENT_TURN_ON: ["light", "switch"],
+    intent.INTENT_TURN_OFF: ["light", "switch"],
+    intent.INTENT_TOGGLE: ["light", "switch"],
+    INTENT_IS_DEVICE_ON: ["light", "switch", "binary_sensor"],
+    INTENT_IS_DEVICE_OFF: ["light", "switch", "binary_sensor"],
+    INTENT_DEVICE_STATE: ["light", "switch", "binary_sensor", "sensor", "cover"],
+    INTENT_OPEN_COVER: ["cover"],
+    INTENT_CLOSE_COVER: ["cover"],
+    INTENT_IS_COVER_OPEN: ["cover"],
+    INTENT_IS_COVER_CLOSED: ["cover"],
+}
+
+DEFAULT_INTENT_STATES = {
+    INTENT_IS_DEVICE_ON: ["on"],
+    INTENT_IS_DEVICE_OFF: ["off"],
+    INTENT_IS_COVER_OPEN: ["open"],
+    INTENT_IS_COVER_CLOSED: ["closed"],
+}
+
+# Config
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: vol.All(
+            {
+                vol.Optional(CONF_LANGUAGE, default=DEFAULT_LANGUAGE): vol.All(
+                    cv.string, vol.In(SUPPORT_LANGUAGES)
+                ),
+                vol.Optional(CONF_WEB_URL, default=DEFAULT_WEB_URL): cv.url,
+                vol.Optional(
+                    CONF_GENERATE_UTTERANCES, default=DEFAULT_GENERATE_UTTERANCES
+                ): bool,
+                vol.Optional(
+                    CONF_REGISTER_CONVERSATION, default=DEFAULT_REGISTER_CONVERSATION
+                ): bool,
+                vol.Optional(CONF_INTENTS): dict,
+                vol.Optional(CONF_SLOTS): dict,
+                vol.Optional(CONF_CUSTOM_WORDS): dict,
+                vol.Optional(
+                    CONF_INTENT_ENTITIES, default=DEFAULT_INTENT_ENTITIES
+                ): dict,
+                vol.Optional(CONF_INTENT_DOMAINS, default=DEFAULT_INTENT_DOMAINS): dict,
+                vol.Optional(CONF_INTENT_STATES, default=DEFAULT_INTENT_STATES): dict,
+                vol.Optional(CONF_UTTERANCE_TEMPLATES): dict,
+            }
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+
+# -----------------------------------------------------------------------------
+
+
+async def async_setup(hass, config):
+    """Set up Rhasspy integration."""
+
+    conf = config.get(DOMAIN)
+    web_url = conf.get(CONF_WEB_URL, DEFAULT_WEB_URL)
+
+    register_conversation = conf.get(
+        CONF_REGISTER_CONVERSATION, DEFAULT_REGISTER_CONVERSATION
+    )
+
+    if register_conversation:
+        # Register converation agent
+        agent = RhasspyConversationAgent(hass, web_url)
+        async_set_agent(hass, agent)
+
+        _LOGGER.info("Registered Rhasspy conversation agent")
+
+    generate_utterances = conf.get(
+        CONF_GENERATE_UTTERANCES, DEFAULT_GENERATE_UTTERANCES
+    )
+    if generate_utterances:
+        # Register intent handlers
+        intent.async_register(hass, DeviceStateIntent())
+
+        intent_states = conf.get(CONF_INTENT_STATES, DEFAULT_INTENT_STATES)
+        for intent_obj, states in intent_states.items():
+            intent.async_register(hass, make_state_handler(intent_obj, states))
+
+    provider = RhasspyProvider(hass, conf)
+    await provider.async_initialize()
+
+    hass.data[DOMAIN] = provider
+
+    return True
+
+
+# -----------------------------------------------------------------------------
+
+
+class RhasspyProvider:
+    def __init__(self, hass, config):
+        self.hass = hass
+        self.config = config
+
+        # Base URL of Rhasspy web server
+        self.url = config.get(CONF_WEB_URL, DEFAULT_WEB_URL)
+
+        # URL to POST sentences.ini
+        self.sentences_url = urljoin(self.url, "api/sentences")
+
+        # URL to POST custom_words.txt
+        self.custom_words_url = urljoin(self.url, "api/custom-words")
+
+        # URL to POST slots
+        self.slots_url = urljoin(self.url, "api/slots")
+
+        # URL to train profile
+        self.train_url = urljoin(self.url, "api/train")
+
+        # e.g., en-US
+        self.language = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
+
+        # entity id -> friendly name
+        self.entities = {}
+
+        self.generate_utterances = self.config.get(
+            CONF_GENERATE_UTTERANCES, DEFAULT_GENERATE_UTTERANCES
+        )
+
+        # Threads/events
+        self.train_thread = None
+        self.train_event = threading.Event()
+
+        self.train_timer_thread = None
+        self.train_timer_event = threading.Event()
+        self.train_timer_seconds = 1
+
+    # -------------------------------------------------------------------------
+
+    async def async_initialize(self):
+        """Initialize Rhasspy provider."""
+
+        # Register for component loaded event
+        self.hass.bus.async_listen(EVENT_COMPONENT_LOADED, self.component_loaded)
+
+    @callback
+    def component_loaded(self, event):
+        """Handle a new component loaded."""
+        old_entity_count = len(self.entities)
+        for state in self.hass.states.async_all():
+            if "_" not in state.name:
+                self.entities[state.entity_id] = state
+
+        if len(self.entities) > old_entity_count:
+            _LOGGER.info("Need to retrain profile")
+            self.schedule_retrain()
+
+    # -------------------------------------------------------------------------
+
+    def schedule_retrain(self):
+        """Resets re-train timer."""
+        if self.train_thread is None:
+            self.train_thread = threading.Thread(
+                target=self._training_thread_proc, daemon=True
+            )
+            self.train_thread.start()
+
+        if self.train_timer_thread is None:
+            self.train_timer_thread = threading.Thread(
+                target=self._training_timer_thread_proc, daemon=True
+            )
+            self.train_timer_thread.start()
+
+        # Reset timer
+        self.train_timer_seconds = 1
+        self.train_timer_event.set()
+
+    def _training_thread_proc(self):
+        """Re-trains voice2json provider. Works with a timer to avoid too many re-trains."""
+        while True:
+            # Wait for re-train request
+            self.train_event.wait()
+            self.train_event.clear()
+
+            try:
+                # rhasspy.intents
+                config_utterances = self.config.get("intents", {})
+
+                # Get utterance templates in the following order:
+                # 1. rhasspy.utterance_templates
+                # 2. Default templates for language
+                # 3. Default English templates
+                utterance_templates = self.config.get(
+                    CONF_UTTERANCE_TEMPLATES,
+                    DEFAULT_UTTERANCES.get(
+                        self.language, DEFAULT_UTTERANCES[DEFAULT_LANGUAGE]
+                    ),
+                )
+
+                # rhasspy.intent_domains
+                intent_domains = self.config.get(
+                    "intent_domains", DEFAULT_INTENT_DOMAINS
+                )
+
+                # rhasspy.intent_entities
+                intent_entities = self.config.get(
+                    "intent_entities", DEFAULT_INTENT_ENTITIES
+                )
+
+                # rhasspy.intent_states
+                intent_states = self.config.get("intent_states", DEFAULT_INTENT_STATES)
+
+                # Generate turn on/off, etc. for valid entities
+                if self.generate_utterances:
+                    default_utterances = DEFAULT_UTTERANCES.get(self.language)
+                    for intent_obj, intent_utterances in utterance_templates.items():
+                        current_utterances = []
+
+                        # Generate utterance for each entity
+                        for entity_id, entity_state in self.entities.items():
+                            # Check if entity has been explicitly included
+                            valid_ids = intent_entities.get(intent_obj, []) or []
+
+                            if entity_id not in valid_ids:
+                                # Check entity domain
+                                if (intent_obj in intent_domains) and (
+                                    entity_state.domain
+                                    not in (intent_domains[intent_obj] or [])
+                                ):
+                                    _LOGGER.debug(
+                                        f"Excluding {entity_id} (domain: {entity_state.domain}) from intent {intent_obj}"
+                                    )
+                                    continue
+
+                            # Generate utterances from format strings
+                            for utt_format in intent_utterances:
+                                current_utterances.append(
+                                    utt_format.format(name=entity_state.name)
+                                )
+
+                        if len(current_utterances) > 0:
+                            # Update config utterances
+                            config_utterances[intent_obj] = current_utterances
+
+                num_utterances = sum(len(u) for u in config_utterances.values())
+                if num_utterances > 0:
+                    _LOGGER.debug("Writing sentences ({self.sentences_url})")
+
+                    # Generate custom sentences.ini
+                    with io.StringIO() as sentences_file:
+                        for intent_type, utterances in config_utterances.items():
+                            print(f"[{intent_type}]", file=sentences_file)
+
+                            for utterance in utterances:
+                                if utterance.startswith("["):
+                                    # Escape "[" at start
+                                    utterance = f"\\{utterance}"
+
+                                print(utterance, file=sentences_file)
+
+                            print("", file=sentences_file)
+
+                        # POST sentences.ini
+                        requests.post(self.sentences_url, sentences_file.getvalue())
+
+                # Check for custom words
+                custom_words = self.config.get("custom_words", {})
+                if len(custom_words) > 0:
+                    _LOGGER.debug(f"Writing custom words ({self.custom_words_url})")
+
+                    with io.StringIO() as custom_words_file:
+                        for word, pronunciations in custom_words.items():
+                            # Accept either string or list of strings
+                            if isinstance(pronunciations, str):
+                                pronunciations = [pronunciations]
+
+                            # word P1 P2 P3...
+                            for pronunciation in pronunciations:
+                                print(
+                                    word.strip(),
+                                    pronunciation.strip(),
+                                    file=custom_words_file,
+                                )
+
+                        # POST custom_words.txt
+                        requests.post(
+                            self.custom_words_url, custom_words_file.getvalue()
+                        )
+
+                # Check for slots
+                slots = self.config.get("slots", {})
+                if len(slots) > 0:
+                    _LOGGER.debug(f"Writing slots ({self.slots_url})")
+                    for slot_name, slot_values in list(slots.items()):
+                        # Accept either string or list of strings
+                        if isinstance(slot_values, str):
+                            slots[slot_name] = [slot_values]
+
+                    # POST slots (JSON)
+                    requests.post(self.slots_url, json=slots)
+
+                # Train profile
+                _LOGGER.info(f"Training profile ({self.train_url})")
+                requests.post(self.train_url)
+
+                _LOGGER.info("Ready")
+            except Exception as e:
+                _LOGGER.exception("train")
+
+    def _training_timer_thread_proc(self):
+        """Counts down a timer and triggers a re-train when it reaches zero."""
+        while True:
+            self.train_timer_event.wait()
+
+            while self.train_timer_seconds > 0:
+                time.sleep(0.1)
+                self.train_timer_seconds -= 0.1
+
+            self.train_event.set()
+            self.train_timer_event.clear()
+
+
+# -----------------------------------------------------------------------------
+
+
+class DeviceStateIntent(intent.IntentHandler):
+    intent_type = INTENT_DEVICE_STATE
+    slot_schema = {"name": cv.string}
+
+    async def async_handle(self, intent_obj):
+        hass = intent_obj.hass
+        slots = self.async_validate_slots(intent_obj.slots)
+        name = slots["name"]["value"]
+        state = intent.async_match_state(hass, name)
+
+        response = intent_obj.create_response()
+
+        # Cheesy plural check
+        verb = "are" if name.endswith("s") else "is"
+
+        speech = f"{name} {verb} {state.state}."
+        _LOGGER.info(speech)
+        response.async_set_speech(speech)
+        return response
+
+
+def make_state_handler(intent_obj, states):
+    class StateIntent(intent.IntentHandler):
+        intent_type = intent_obj
+        slot_schema = {"name": cv.string}
+
+        async def async_handle(self, intent_obj):
+            hass = intent_obj.hass
+            slots = self.async_validate_slots(intent_obj.slots)
+            name = slots["name"]["value"]
+            state = intent.async_match_state(hass, name)
+            is_state = state.state.lower() in states
+
+            response = intent_obj.create_response()
+
+            confirm = "yes" if is_state else "no"
+            verb = "are" if name.endswith("s") else "is"
+
+            speech = f"{confirm}. {name} {verb} {state.state}."
+            _LOGGER.info(speech)
+            response.async_set_speech(speech)
+            return response
+
+    return StateIntent()
