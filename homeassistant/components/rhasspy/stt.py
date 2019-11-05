@@ -125,9 +125,9 @@ class RhasspySTTProvider(Provider):
                             self.stream_url, data=chunk_generator(), chunked=True
                         ) as resp:
                             await resp.text()
-                except Exception as e:
+                except aiohttp.ClientOSError:
                     # Stream was closed
-                    _LOGGER.exception("here")
+                    pass
 
                 text_result = requests.get(self.stream_url).text.strip()
                 _LOGGER.info(text_result)
