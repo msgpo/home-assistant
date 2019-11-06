@@ -3,8 +3,10 @@ import io
 import logging
 import threading
 import time
+import asyncio
 from urllib.parse import urljoin
 
+import pydash
 import requests
 import voluptuous as vol
 
@@ -36,6 +38,7 @@ CONF_INTENTS = "intents"
 CONF_SLOTS = "slots"
 
 # User defined words and pronunciations
+
 CONF_CUSTOM_WORDS = "custom_words"
 
 # Automatically generate turn on/off and toggle utterances for all entities with
@@ -73,6 +76,13 @@ INTENT_IS_COVER_CLOSED = "IsCoverClosed"
 
 INTENT_DEVICE_STATE = "DeviceState"
 
+INTENT_TRIGGER_AUTOMATION = "TriggerAutomation"
+INTENT_TRIGGER_AUTOMATION_LATER = "TriggerAutomationLater"
+
+INTENT_SET_TIMER = "SetTimer"
+
+INTENT_TIMER_READY = "TimerReady"
+
 # TODO: Translate to all supported languages
 DEFAULT_UTTERANCES = {
     "en-US": {
@@ -106,8 +116,33 @@ DEFAULT_UTTERANCES = {
         ],
         INTENT_IS_COVER_OPEN: ["(is | are) [the|a|an] ({name}){{name}} open"],
         INTENT_IS_COVER_CLOSED: ["(is | are) [the|a|an] ({name}){{name}} closed"],
+        INTENT_TRIGGER_AUTOMATION: [
+            "(run | trigger) [program | automation] ({name}){{name}}"
+        ],
+        INTENT_SET_TIMER: [
+            "two_to_nine = (two:2 | three:3 | four:4 | five:5 | six:6 | seven:7 | eight:8 | nine:9)",
+            "one_to_nine = (one:1 | <two_to_nine>)",
+            "teens = (ten:10 | eleven:11 | twelve:12 | thirteen:13 | fourteen:14 | fifteen:15 | sixteen:16 | seventeen:17 | eighteen:18 | nineteen:19)",
+            "tens = (twenty:20 | thirty:30 | forty:40 | fifty:50)",
+            "one_to_nine = (one:1 | <two_to_nine>)",
+            "one_to_fifty_nine = (<one_to_nine> | <teens> | <tens> [<one_to_nine>])",
+            "two_to_fifty_nine = (<two_to_nine> | <teens> | <tens> [<one_to_nine>])",
+            "hour_half_expr = (<one_to_nine>{{hours}} and (a half){{minutes:30}})",
+            "hour_expr = (((one:1){{hours}}) | ((<one_to_nine>){{hours}}) | <hour_half_expr>) (hour | hours)",
+            "minute_half_expr = (<one_to_fifty_nine>{{minutes}} and (a half){{seconds:30}})",
+            "minute_expr = (((one:1){{minutes}}) | ((<two_to_fifty_nine>){{minutes}}) | <minute_half_expr>) (minute | minutes)",
+            "second_expr = (((one:1){{seconds}}) | ((<two_to_fifty_nine>){{seconds}})) (second | seconds)",
+            "time_expr = ((<hour_expr> [[and] <minute_expr>] [[and] <second_expr>]) | (<minute_expr> [[and] <second_expr>]) | <second_expr>)",
+            "set [a] timer for <time_expr>",
+        ],
+        INTENT_TRIGGER_AUTOMATION_LATER: [
+            "(run | trigger) [program | automation] ({name}){{name}} (in | after) <SetTimer.time_expr>",
+            "(in | after) <SetTimer.time_expr> (run | trigger) [program | automation] ({name}){{name}}",
+        ],
     }
 }
+
+DOMAIN_HOME_ASSISTANT = "homeassistant"
 
 DEFAULT_INTENT_ENTITIES = {
     intent.INTENT_TURN_ON: ["group.all_lights", "group.all_switches"],
@@ -120,6 +155,7 @@ DEFAULT_INTENT_ENTITIES = {
     INTENT_CLOSE_COVER: ["group.all_covers"],
     INTENT_IS_COVER_OPEN: ["group.all_covers"],
     INTENT_IS_COVER_CLOSED: ["group.all_covers"],
+    INTENT_SET_TIMER: [],
 }
 
 DEFAULT_INTENT_DOMAINS = {
@@ -133,6 +169,9 @@ DEFAULT_INTENT_DOMAINS = {
     INTENT_CLOSE_COVER: ["cover"],
     INTENT_IS_COVER_OPEN: ["cover"],
     INTENT_IS_COVER_CLOSED: ["cover"],
+    INTENT_TRIGGER_AUTOMATION: ["automation"],
+    INTENT_TRIGGER_AUTOMATION_LATER: ["automation"],
+    INTENT_SET_TIMER: [DOMAIN_HOME_ASSISTANT],
 }
 
 DEFAULT_INTENT_STATES = {
@@ -172,6 +211,11 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
+# Services
+SERVICE_TRAIN = "train"
+
+SCHEMA_SERVICE_TRAIN = vol.Schema({})
+
 # -----------------------------------------------------------------------------
 
 
@@ -198,6 +242,9 @@ async def async_setup(hass, config):
     if generate_utterances:
         # Register intent handlers
         intent.async_register(hass, DeviceStateIntent())
+        intent.async_register(hass, TriggerAutomationIntent())
+        intent.async_register(hass, TriggerAutomationLaterIntent())
+        intent.async_register(hass, SetTimerIntent())
 
         intent_states = conf.get(CONF_INTENT_STATES, DEFAULT_INTENT_STATES)
         for intent_obj, states in intent_states.items():
@@ -207,6 +254,16 @@ async def async_setup(hass, config):
     await provider.async_initialize()
 
     hass.data[DOMAIN] = provider
+
+    # Register services
+    async def async_train_handle(service):
+        """Service handle for train."""
+        _LOGGER.info("Re-training profile")
+        provider.schedule_retrain()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_TRAIN, async_train_handle, schema=SCHEMA_SERVICE_TRAIN
+    )
 
     return True
 
@@ -331,6 +388,7 @@ class RhasspyProvider:
                 if self.generate_utterances:
                     default_utterances = DEFAULT_UTTERANCES.get(self.language)
                     for intent_obj, intent_utterances in utterance_templates.items():
+                        intent_domain = intent_domains[intent_obj] or []
                         current_utterances = []
 
                         # Generate utterance for each entity
@@ -341,8 +399,7 @@ class RhasspyProvider:
                             if entity_id not in valid_ids:
                                 # Check entity domain
                                 if (intent_obj in intent_domains) and (
-                                    entity_state.domain
-                                    not in (intent_domains[intent_obj] or [])
+                                    entity_state.domain not in intent_domain
                                 ):
                                     _LOGGER.debug(
                                         f"Excluding {entity_id} (domain: {entity_state.domain}) from intent {intent_obj}"
@@ -354,6 +411,11 @@ class RhasspyProvider:
                                 current_utterances.append(
                                     utt_format.format(name=entity_state.name)
                                 )
+
+                        # Add once
+                        if DOMAIN_HOME_ASSISTANT in intent_domain:
+                            for utt_format in intent_utterances:
+                                current_utterances.append(utt_format.format())
 
                         if len(current_utterances) > 0:
                             # Update config utterances
@@ -484,3 +546,80 @@ def make_state_handler(intent_obj, states):
             return response
 
     return StateIntent()
+
+
+class TriggerAutomationIntent(intent.IntentHandler):
+    intent_type = INTENT_TRIGGER_AUTOMATION
+    slot_schema = {"name": cv.string}
+
+    async def async_handle(self, intent_obj):
+        hass = intent_obj.hass
+        slots = self.async_validate_slots(intent_obj.slots)
+        name = slots["name"]["value"]
+        state = intent.async_match_state(hass, name)
+
+        await hass.services.async_call(
+            "automation", "trigger", {"entity_id": state.entity_id}
+        )
+
+        response = intent_obj.create_response()
+        return response
+
+
+class SetTimerIntent(intent.IntentHandler):
+    intent_type = INTENT_SET_TIMER
+    slot_schema = {"hours": cv.string, "minutes": cv.string, "seconds": cv.string}
+
+    async def async_handle(self, intent_obj):
+        hass = intent_obj.hass
+        slots = self.async_validate_slots(intent_obj.slots)
+        total_seconds = SetTimerIntent.get_seconds(slots)
+
+        _LOGGER.info(f"Waiting for {total_seconds} second(s)")
+        await asyncio.sleep(total_seconds)
+
+        return await intent.async_handle(hass, DOMAIN, INTENT_TIMER_READY, {}, "")
+
+    @classmethod
+    def get_seconds(cls, slots) -> int:
+        # Compute total number of seconds for timer.
+        # Time unit values may have multiple parts, like "30 2" for 32.
+        total_seconds = 0
+        for seconds_str in pydash.get(slots, "seconds.value").strip().split():
+            total_seconds += int(seconds_str)
+
+        for minutes_str in pydash.get(slots, "minutes.value", "").strip().split():
+            total_seconds += int(minutes_str) * 60
+
+        for hours_str in pydash.get(slots, "hours.value", "").strip().split():
+            total_seconds += int(hours_str) * 60 * 60
+
+        return total_seconds
+
+
+class TriggerAutomationLaterIntent(intent.IntentHandler):
+    intent_type = INTENT_TRIGGER_AUTOMATION_LATER
+    slot_schema = {
+        "name": cv.string,
+        "hours": cv.string,
+        "minutes": cv.string,
+        "seconds": cv.string,
+    }
+
+    async def async_handle(self, intent_obj):
+        hass = intent_obj.hass
+        slots = self.async_validate_slots(intent_obj.slots)
+        name = slots["name"]["value"]
+        state = intent.async_match_state(hass, name)
+        total_seconds = SetTimerIntent.get_seconds(slots)
+
+        _LOGGER.info(f"Waiting for {total_seconds} second(s) before triggering {name}")
+        await asyncio.sleep(total_seconds)
+
+        # Trigger automation
+        await hass.services.async_call(
+            "automation", "trigger", {"entity_id": state.entity_id}
+        )
+
+        response = intent_obj.create_response()
+        return response

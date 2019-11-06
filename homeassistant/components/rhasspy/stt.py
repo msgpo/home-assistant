@@ -171,7 +171,7 @@ class RhasspySTTProvider(Provider):
         except Exception as e:
             _LOGGER.error("async_process_audio_stream")
 
-        return SpeechResult(result=SpeechResultState.ERROR)
+        return SpeechResult(text="", result=SpeechResultState.ERROR)
 
     # -------------------------------------------------------------------------
 
