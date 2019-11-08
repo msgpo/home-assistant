@@ -10,6 +10,21 @@ import pydash
 from homeassistant.helpers.template import Template
 from homeassistant.components.stt import SpeechMetadata
 
+from .const import (
+    KEY_COMMAND,
+    KEY_COMMANDS,
+    KEY_COMMAND_TEMPLATE,
+    KEY_COMMAND_TEMPLATES,
+    KEY_DATA,
+    KEY_DATA_TEMPLATE,
+    KEY_INCLUDE,
+    KEY_EXCLUDE,
+    KEY_DOMAINS,
+    KEY_ENTITIES,
+)
+
+# -----------------------------------------------------------------------------
+
 _LOGGER = logging.getLogger("rhasspy")
 
 # -----------------------------------------------------------------------------
@@ -100,31 +115,37 @@ def command_to_sentences(hass, command, entities, template_dict={}) -> Iterable[
         commands = []
         have_templates = False
 
-        if "command" in command:
-            commands = [command["command"]]
-        elif "commands" in command:
-            commands = command["commands"]
-        elif "command_template" in command:
-            commands = [command["command_template"]]
+        if KEY_COMMAND in command:
+            commands = [command[KEY_COMMAND]]
+        elif KEY_COMMANDS in command:
+            commands = command[KEY_COMMANDS]
+        elif KEY_COMMAND_TEMPLATE in command:
+            commands = [command[KEY_COMMAND_TEMPLATE]]
             have_templates = True
-        elif "command_templates" in command:
-            commands = command["command_templates"]
+        elif KEY_COMMAND_TEMPLATES in command:
+            commands = command[KEY_COMMAND_TEMPLATES]
             have_templates = True
 
         possible_entity_ids: Set[str] = set()
         if have_templates:
             # Gather all entities to be used in command templates
-            if "include" in command:
-                include_domains = set(pydash.get(command, "include.domains", []))
-                for entity_id, state in entities.items():
+            if KEY_INCLUDE in command:
+                include_domains = set(
+                    pydash.get(command, f"{KEY_INCLUDE}.{KEY_DOMAINS}", [])
+                )
+                for entity_id, (state, _) in entities.items():
                     if state.domain in include_domains:
                         possible_entity_ids.add(entity_id)
 
-                include_entities = pydash.get(command, "include.entities", [])
+                include_entities = pydash.get(
+                    command, f"{KEY_INCLUDE}.{KEY_ENTITIES}", []
+                )
                 possible_entity_ids.update(include_entities)
 
-            if "exclude" in command:
-                exclude_entities = pydash.get(command, "exclude.entities", [])
+            if KEY_EXCLUDE in command:
+                exclude_entities = pydash.get(
+                    command, f"{KEY_EXCLUDE}.{KEY_ENTITIES}", []
+                )
                 possible_entity_ids.difference_update(exclude_entities)
 
         # Generate Rhasspy sentences for each command (template)
@@ -139,18 +160,20 @@ def command_to_sentences(hass, command, entities, template_dict={}) -> Iterable[
                 # Render template for each possible entity (state)
                 command_strs = []
                 for entity_id in possible_entity_ids:
-                    state = entities.get(entity_id)
-                    if state is not None:
-                        template_dict = {"entity": state}
-                        command_strs.extend(
-                            command_to_sentences(
-                                hass, sub_command, entities, template_dict=template_dict
-                            )
+                    if entity_id not in entities:
+                        continue
+
+                    state, entity_name = entities.get(entity_id)
+                    template_dict = {"entity": state, "entity_name": entity_name}
+                    command_strs.extend(
+                        command_to_sentences(
+                            hass, sub_command, entities, template_dict=template_dict
                         )
+                    )
 
             # Extra data to attach to command
-            command_data = dict(command.get("data", {}))
-            command_data_template = command.get("data_template", {})
+            command_data = dict(command.get(KEY_DATA, {}))
+            command_data_template = command.get(KEY_DATA_TEMPLATE, {})
 
             # Render templates
             for data_key, data_template in command_data_template.items():

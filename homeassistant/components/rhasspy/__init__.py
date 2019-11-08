@@ -1,21 +1,23 @@
 """Support for Rhasspy integration."""
 import io
+import re
 import logging
 import threading
 import time
 import asyncio
 from collections import defaultdict
 from urllib.parse import urljoin
+from typing import Dict, Tuple
 
 import pydash
 import requests
 import voluptuous as vol
+from num2words import num2words
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.core import Event, callback, State
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.helpers import intent
-from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
 
@@ -31,10 +33,22 @@ from .const import (
     INTENT_TRIGGER_AUTOMATION_LATER,
     INTENT_SET_TIMER,
     INTENT_TIMER_READY,
+    KEY_COMMAND,
+    KEY_COMMANDS,
+    KEY_COMMAND_TEMPLATE,
+    KEY_COMMAND_TEMPLATES,
+    KEY_DATA,
+    KEY_DATA_TEMPLATE,
+    KEY_INCLUDE,
+    KEY_EXCLUDE,
+    KEY_DOMAINS,
+    KEY_ENTITIES,
+    KEY_REGEX,
 )
 
 from .conversation import RhasspyConversationAgent
 from .core import command_to_sentences
+from .default_commands import DEFAULT_INTENTS
 
 
 # -----------------------------------------------------------------------------
@@ -48,7 +62,7 @@ CONF_WEB_URL = "web_url"
 CONF_LANGUAGE = "language"
 
 # User defined commands by intent
-CONF_COMMANDS = "commands"
+CONF_INTENTS = "intents"
 
 # User defined slots and values
 CONF_SLOTS = "slots"
@@ -56,231 +70,57 @@ CONF_SLOTS = "slots"
 # User defined words and pronunciations
 CONF_CUSTOM_WORDS = "custom_words"
 
-# Automatically generate turn on/off and toggle utterances for all entities with
-# friendly names.
-# CONF_GENERATE_UTTERANCES = "generate_utterances"
+# Name replacements for entities
+CONF_NAME_REPLACE = "name_replace"
 
 # If True, Rhasspy conversation agent is registered
 CONF_REGISTER_CONVERSATION = "register_conversation"
 
-# List of entity ids by intent to generate uttrances for
-# CONF_INTENT_ENTITIES = "intent_entities"
-
-# List of Home Assistant domains by intent to generate utterances for
-# CONF_INTENT_DOMAINS = "intent_domains"
-
-# List of state names by intent to consider as matches
-# CONF_INTENT_STATES = "intent_states"
-
-# List of format strings by intent.
-# Used to automatically generate utterances.
-# CONF_INTENT_TEMPLATES = "intent_templates"
+# List of intents for Rhasspy to handle
+CONF_HANDLE_INTENTS = "handle_intents"
 
 # Default settings
 DEFAULT_WEB_URL = "http://localhost:12101"
 DEFAULT_LANGUAGE = "en-US"
-DEFAULT_COMMANDS = {}
 DEFAULT_SLOTS = {}
 DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
+DEFAULT_NAME_REPLACE = {KEY_REGEX: [{"[_-]": " "}]}
 
-# KEY_INCLUDE_DOMAINS = "include_domains"
-# KEY_INCLUDE_ENTITIES = "include_entities"
-# KEY_EXCLUDE_DOMAINS = "exclude_domains"
-# KEY_EXCLUDE_ENTITIES = "exclude_entities"
-
-# DEFAULT_GENERATE_UTTERANCES = {
-#     intent.INTENT_TURN_ON: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_lights", "group.all_switches"],
-#     },
-#     intent.INTENT_TURN_OFF: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_lights", "group.all_switches"],
-#     },
-#     intent.INTENT_TOGGLE: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_lights", "group.all_switches"],
-#     },
-#     INTENT_OPEN_COVER: {
-#         KEY_INCLUDE_DOMAINS: ["cover"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_covers"],
-#     },
-#     INTENT_CLOSE_COVER: {
-#         KEY_INCLUDE_DOMAINS: ["cover"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_covers"],
-#     },
-#     INTENT_IS_DEVICE_ON: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch", "binary_sensor"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_lights", "group.all_switches"],
-#     },
-#     INTENT_IS_DEVICE_OFF: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch", "binary_sensor"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_lights", "group.all_switches"],
-#     },
-#     INTENT_IS_COVER_OPEN: {
-#         KEY_INCLUDE_DOMAINS: ["cover"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_covers"],
-#     },
-#     INTENT_IS_COVER_CLOSED: {
-#         KEY_INCLUDE_DOMAINS: ["cover"],
-#         KEY_INCLUDE_ENTITIES: ["group.all_covers"],
-#     },
-#     INTENT_DEVICE_STATE: {
-#         KEY_INCLUDE_DOMAINS: ["light", "switch", "binary_sensor", "sensor", "cover"],
-#         KEY_INCLUDE_ENTITIES: [
-#             "group.all_lights",
-#             "group.all_switches",
-#             "group.all_covers",
-#         ],
-#     },
-#     INTENT_TRIGGER_AUTOMATION: {KEY_INCLUDE_DOMAINS: ["automation"]},
-#     INTENT_TRIGGER_AUTOMATION_LATER: {KEY_INCLUDE_DOMAINS: ["automation"]},
-# }
-
-# TODO: Translate to all supported languages
-DEFAULT_UTTERANCES = {
-    "en-US": {
-        # Built-in intents
-        intent.INTENT_TURN_ON: [
-            T("turn on [the|a|an] ({{ entity.name }}){name}"),
-            T("turn [the|a|an] ({{ entity.name }}){name} on"),
-        ],
-        intent.INTENT_TURN_OFF: [
-            T("turn off [the|a|an] ({{ entity.name }}){name}"),
-            T("turn [the|a|an] ({{ entity.name }}){name} off"),
-        ],
-        intent.INTENT_TOGGLE: [
-            T("toggle [the|a|an] ({{ entity.name }}){name}"),
-            T("[the|a|an] ({{ entity.name }}){name} toggle"),
-        ],
-        INTENT_OPEN_COVER: [
-            T("open [the|a|an] ({{ entity.name }}){name}"),
-            T("[the|a|an] ({{ entity.name }}){name} open"),
-        ],
-        INTENT_CLOSE_COVER: [
-            T("close [the|a|an] ({{ entity.name }}){name}"),
-            T("[the|a|an] ({{ entity.name }}){name} close"),
-        ],
-        # Custom intents
-        INTENT_IS_DEVICE_ON: [T("(is | are) [the|a|an] ({{ entity.name }}){name} on")],
-        INTENT_IS_DEVICE_OFF: [
-            T("(is | are) [the|a|an] ({{ entity.name }}){name} off")
-        ],
-        INTENT_DEVICE_STATE: [
-            T(
-                "what (is | are) [the|a|an] (state | states) of [the|a|an] ({{ entity.name }}){name}"
-            ),
-            T("what [is | are] [the|a|an] ({{ entity.name }}){name} (state | states)"),
-        ],
-        INTENT_IS_COVER_OPEN: [
-            T("(is | are) [the|a|an] ({{ entity.name }}){name} open")
-        ],
-        INTENT_IS_COVER_CLOSED: [
-            T("(is | are) [the|a|an] ({{ entity.name }}){name} closed")
-        ],
-        INTENT_TRIGGER_AUTOMATION: [
-            T("(run | trigger) [program | automation] ({{ entity.name }}){name}")
-        ],
-        INTENT_SET_TIMER: [
-            T(
-                "two_to_nine = (two:2 | three:3 | four:4 | five:5 | six:6 | seven:7 | eight:8 | nine:9)"
-            ),
-            T("one_to_nine = (one:1 | <two_to_nine>)"),
-            T(
-                "teens = (ten:10 | eleven:11 | twelve:12 | thirteen:13 | fourteen:14 | fifteen:15 | sixteen:16 | seventeen:17 | eighteen:18 | nineteen:19)"
-            ),
-            T("tens = (twenty:20 | thirty:30 | forty:40 | fifty:50)"),
-            T("one_to_nine = (one:1 | <two_to_nine>)"),
-            T("one_to_fifty_nine = (<one_to_nine> | <teens> | <tens> [<one_to_nine>])"),
-            T("two_to_fifty_nine = (<two_to_nine> | <teens> | <tens> [<one_to_nine>])"),
-            T("hour_half_expr = (<one_to_nine>{hours} and (a half){{minutes:30}})"),
-            T(
-                "hour_expr = (((one:1){hours}) | ((<one_to_nine>){hours}) | <hour_half_expr>) (hour | hours)"
-            ),
-            T(
-                "minute_half_expr = (<one_to_fifty_nine>{minutes} and (a half){{seconds:30}})"
-            ),
-            T(
-                "minute_expr = (((one:1){minutes}) | ((<two_to_fifty_nine>){minutes}) | <minute_half_expr>) (minute | minutes)"
-            ),
-            T(
-                "second_expr = (((one:1){seconds}) | ((<two_to_fifty_nine>){seconds})) (second | seconds)"
-            ),
-            T(
-                "time_expr = ((<hour_expr> [[and] <minute_expr>] [[and] <second_expr>]) | (<minute_expr> [[and] <second_expr>]) | <second_expr>)"
-            ),
-            T("set [a] timer for <time_expr>"),
-        ],
-        INTENT_TRIGGER_AUTOMATION_LATER: [
-            T(
-                "(run | trigger) [program | automation] ({{ entity.name }}){name} (in | after) <SetTimer.time_expr>"
-            ),
-            T(
-                "(in | after) <SetTimer.time_expr> (run | trigger) [program | automation] ({{ entity.name }}){name}"
-            ),
-        ],
-    }
-}
-
-# DOMAIN_HOME_ASSISTANT = "homeassistant"
-
-# DEFAULT_INTENT_ENTITIES = {
-#     intent.INTENT_TURN_ON: ["group.all_lights", "group.all_switches"],
-#     intent.INTENT_TURN_OFF: ["group.all_lights", "group.all_switches"],
-#     intent.INTENT_TOGGLE: ["group.all_lights", "group.all_switches"],
-#     INTENT_IS_DEVICE_ON: ["group.all_lights", "group.all_switches"],
-#     INTENT_IS_DEVICE_OFF: ["group.all_lights", "group.all_switches"],
-#     INTENT_DEVICE_STATE: ["group.all_lights", "group.all_switches", "group.all_covers"],
-#     INTENT_OPEN_COVER: ["group.all_covers"],
-#     INTENT_CLOSE_COVER: ["group.all_covers"],
-#     INTENT_IS_COVER_OPEN: ["group.all_covers"],
-#     INTENT_IS_COVER_CLOSED: ["group.all_covers"],
-#     INTENT_SET_TIMER: [],
-# }
-
-# DEFAULT_INTENT_DOMAINS = {
-#     intent.INTENT_TURN_ON: ["light", "switch"],
-#     intent.INTENT_TURN_OFF: ["light", "switch"],
-#     intent.INTENT_TOGGLE: ["light", "switch"],
-#     INTENT_IS_DEVICE_ON: ["light", "switch", "binary_sensor"],
-#     INTENT_IS_DEVICE_OFF: ["light", "switch", "binary_sensor"],
-#     INTENT_DEVICE_STATE: ["light", "switch", "binary_sensor", "sensor", "cover"],
-#     INTENT_OPEN_COVER: ["cover"],
-#     INTENT_CLOSE_COVER: ["cover"],
-#     INTENT_IS_COVER_OPEN: ["cover"],
-#     INTENT_IS_COVER_CLOSED: ["cover"],
-#     INTENT_TRIGGER_AUTOMATION: ["automation"],
-#     INTENT_TRIGGER_AUTOMATION_LATER: ["automation"],
-#     INTENT_SET_TIMER: [DOMAIN_HOME_ASSISTANT],
-# }
-
-# DEFAULT_INTENT_STATES = {
-#     INTENT_IS_DEVICE_ON: ["on"],
-#     INTENT_IS_DEVICE_OFF: ["off"],
-#     INTENT_IS_COVER_OPEN: ["open"],
-#     INTENT_IS_COVER_CLOSED: ["closed"],
-# }
+DEFAULT_HANDLE_INTENTS = [
+    INTENT_IS_DEVICE_ON,
+    INTENT_IS_DEVICE_OFF,
+    INTENT_IS_COVER_OPEN,
+    INTENT_IS_COVER_CLOSED,
+    INTENT_DEVICE_STATE,
+    INTENT_TRIGGER_AUTOMATION,
+    INTENT_TRIGGER_AUTOMATION_LATER,
+    INTENT_SET_TIMER,
+    INTENT_TIMER_READY,
+]
 
 # DEFAULT_INTENT_RESPONSES: {INTENT_IS_DEVICE_ON: "{% %}"}
 
 # Config
 COMMAND_SCHEMA = vol.Schema(
     {
-        vol.Exclusive("command", "commands"): str,
-        vol.Exclusive("command_template", "commands"): cv.template,
-        vol.Exclusive("commands", "commands"): vol.All(cv.ensure_list, [str]),
-        vol.Exclusive("command_templates", "commands"): vol.All(
+        vol.Exclusive(KEY_COMMAND, "commands"): str,
+        vol.Exclusive(KEY_COMMAND_TEMPLATE, "commands"): cv.template,
+        vol.Exclusive(KEY_COMMANDS, "commands"): vol.All(cv.ensure_list, [str]),
+        vol.Exclusive(KEY_COMMAND_TEMPLATES, "commands"): vol.All(
             cv.ensure_list, [cv.template]
         ),
-        vol.Optional("data"): vol.Schema({str: object}),
-        vol.Optional("data_template"): vol.Schema({str: cv.template}),
-        vol.Optional("include"): vol.Schema(
-            {vol.Optional("domains"): vol.All(cv.ensure_list, [str])},
-            {vol.Optional("entities"): vol.All(cv.ensure_list, [cv.entity_id])},
+        vol.Optional(KEY_DATA): vol.Schema({str: object}),
+        vol.Optional(KEY_DATA_TEMPLATE): vol.Schema({str: cv.template}),
+        vol.Optional(KEY_INCLUDE): vol.Schema(
+            {vol.Optional(KEY_DOMAINS): vol.All(cv.ensure_list, [str])},
+            {vol.Optional(KEY_ENTITIES): vol.All(cv.ensure_list, [cv.entity_id])},
         ),
-        vol.Optional("exclude"): vol.Schema(
-            {vol.Optional("entities"): vol.All(cv.ensure_list, [cv.entity_id])}
+        vol.Optional(KEY_EXCLUDE): vol.Schema(
+            {vol.Optional(KEY_ENTITIES): vol.All(cv.ensure_list, [cv.entity_id])}
+        ),
+        vol.Optional(CONF_HANDLE_INTENTS, DEFAULT_HANDLE_INTENTS): vol.Schema(
+            cv.ensure_list, [str]
         ),
     }
 )
@@ -296,23 +136,21 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(
                     CONF_REGISTER_CONVERSATION, default=DEFAULT_REGISTER_CONVERSATION
                 ): bool,
-                vol.Optional(CONF_SLOTS, DEFAULT_SLOTS): {
-                    str: vol.All(cv.ensure_list, [str])
-                },
+                vol.Optional(CONF_SLOTS, DEFAULT_SLOTS): vol.Schema(
+                    {str: vol.All(cv.ensure_list, [str])}
+                ),
                 vol.Optional(CONF_CUSTOM_WORDS, DEFAULT_CUSTOM_WORDS): vol.Schema(
                     {str: str}
                 ),
-                vol.Optional(CONF_COMMANDS, DEFAULT_COMMANDS): vol.Schema(
+                vol.Optional(CONF_INTENTS): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str, COMMAND_SCHEMA])}
                 ),
-                # vol.Optional(
-                #     CONF_INTENT_ENTITIES, default=DEFAULT_INTENT_ENTITIES
-                # ): dict,
-                # vol.Optional(CONF_INTENT_DOMAINS, default=DEFAULT_INTENT_DOMAINS): dict,
-                # vol.Optional(CONF_INTENT_STATES, default=DEFAULT_INTENT_STATES): dict,
-                # vol.Optional(CONF_UTTERANCE_TEMPLATES): vol.Schema(
-                #     {str: vol.All(cv.ensure_list, [cv.template])}
-                # ),
+                vol.Optional(CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE): {
+                    vol.Optional(KEY_REGEX, {}): vol.All(
+                        cv.ensure_list, [vol.Schema({str: str})]
+                    ),
+                    vol.Optional(KEY_ENTITIES, {}): vol.Schema({cv.entity_id: str}),
+                },
             }
         )
     },
@@ -388,11 +226,11 @@ class RhasspyProvider:
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
 
-        # entity id -> entity state
-        self.entities: Dict[str, State] = {}
+        # entity id -> [entity state, clean name]
+        self.entities: Dict[str, Tuple[State, str]] = {}
 
-        # entity id -> name
-        self.entity_name_map: Dict[str, str] = {}
+        # lower-cased entity names in self.entities
+        self.entity_names_lower: Set[str] = set()
 
         # Threads/events
         self.train_thread = None
@@ -430,10 +268,49 @@ class RhasspyProvider:
     def component_loaded(self, event):
         """Handle a new component loaded."""
         old_entity_count = len(self.entities)
-        for state in self.hass.states.async_all():
-            if "_" not in state.name:
-                self.entities[state.entity_id] = state
+        name_replace = self.config.get(CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE)
+        entity_name_map = name_replace.get(KEY_ENTITIES, {})
+        name_regexes = name_replace.get(KEY_REGEX, {})
+        num2words_lang = self.language.replace("-", "_")
 
+        for state in self.hass.states.async_all():
+            if state.entity_id in self.entities:
+                continue
+
+            if state.entity_id in entity_name_map:
+                # User-defined name
+                entity_name = entity_name_map[state.entity_id]
+            else:
+                # Try to clean name
+                entity_name = state.name
+
+                # Do number replacement
+                words = re.split(r"\s+", entity_name)
+                for i, word in enumerate(words):
+                    try:
+                        number = float(word)
+                        try:
+                            words[i] = num2words(number, lang=num2words_lang)
+                        except NotImplementedError:
+                            # Use default language (U.S. English)
+                            words[i] = num2words(number)
+                    except ValueError:
+                        pass
+
+                entity_name = " ".join(words)
+
+                # Do regex replacements
+                for replacements in name_regexes:
+                    for pattern, replacement in replacements.items():
+                        entity_name = re.sub(pattern, replacement, entity_name)
+
+            # Ensure we don't duplicate names
+            entity_name_lower = entity_name.lower()
+            if entity_name_lower not in self.entity_names_lower:
+                self.entities[state.entity_id] = (state, entity_name)
+                self.entity_names_lower.add(entity_name_lower)
+
+        # Detemine if new entities have been added
         if len(self.entities) > old_entity_count:
             _LOGGER.info("Need to retrain profile")
             self.schedule_retrain()
@@ -467,87 +344,22 @@ class RhasspyProvider:
 
             try:
                 sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
+                if CONF_INTENTS in self.config:
+                    # User-provided commands
+                    intent_commands = self.config[CONF_INTENTS]
+                else:
+                    # Default commands
+                    intent_commands = DEFAULT_INTENTS.get(
+                        self.language, DEFAULT_INTENTS.get(DEFAULT_LANGUAGE)
+                    )
 
-                # Non-templated commands
-                for intent_type, commands in self.config.get(
-                    CONF_COMMANDS, DEFAULT_COMMANDS
-                ).items():
+                # Generate commands
+                for intent_type, commands in intent_commands.items():
                     for command in commands:
                         for sentence in command_to_sentences(
                             self.hass, command, self.entities
                         ):
                             sentences_by_intent[intent_type].append(sentence)
-
-                # rhasspy.intents
-                # config_utterances = self.config.get("intents", {})
-
-                # Get utterance templates in the following order:
-                # 1. rhasspy.utterance_templates
-                # 2. Default templates for language
-                # 3. Default English templates
-                # utterance_templates = self.config.get(
-                #     CONF_UTTERANCE_TEMPLATES,
-                #     DEFAULT_UTTERANCES.get(
-                #         self.language, DEFAULT_UTTERANCES[DEFAULT_LANGUAGE]
-                #     ),
-                # )
-
-                # rhasspy.intent_domains
-                # intent_domains = self.config.get(
-                #     "intent_domains", DEFAULT_INTENT_DOMAINS
-                # )
-
-                # rhasspy.intent_entities
-                # intent_entities = self.config.get(
-                #     "intent_entities", DEFAULT_INTENT_ENTITIES
-                # )
-
-                # rhasspy.intent_states
-                # intent_states = self.config.get("intent_states", DEFAULT_INTENT_STATES)
-
-                # Generate turn on/off, etc. for valid entities
-                # if len(self.generate_utterances) > 0:
-                #     default_templates = DEFAULT_UTTERANCES.get(self.language)
-
-                #     for intent_obj, intent_utterances in utterance_templates.items():
-                #         if intent_obj not in self.generate_utterances:
-                #             continue
-
-                #         intent_domain = intent_domains.get(intent_obj) or []
-                #         current_utterances = []
-
-                #         # Generate utterance for each entity
-                #         for entity_id, entity_state in self.entities.items():
-                #             # Check if entity has been explicitly included
-                #             valid_ids = intent_entities.get(intent_obj, []) or []
-
-                #             if entity_id not in valid_ids:
-                #                 # Check entity domain
-                #                 if (intent_obj in intent_domains) and (
-                #                     entity_state.domain not in intent_domain
-                #                 ):
-                #                     _LOGGER.debug(
-                #                         f"Excluding {entity_id} (domain: {entity_state.domain}) from intent {intent_obj}"
-                #                     )
-                #                     continue
-
-                #             # Generate utterances from format strings
-                #             for utt_format in intent_utterances:
-                #                 utt_format.hass = self.hass
-                #                 current_utterances.append(
-                #                     utt_format.async_render(state=entity_state)
-                #                 )
-
-                #         # Add once
-                #         if DOMAIN_HOME_ASSISTANT in intent_domain:
-                #             for utt_format in intent_utterances:
-                #                 current_utterances.append(utt_format.format())
-
-                #         if len(current_utterances) > 0:
-                #             # Update config utterances
-                #             config_utterances[intent_obj] = current_utterances
-
-                #             _LOGGER.info(current_utterances)
 
                 # Check for custom sentences
                 num_sentences = sum(len(s) for s in sentences_by_intent.values())
@@ -562,7 +374,7 @@ class RhasspyProvider:
                             for sentence in sentences:
                                 if sentence.startswith("["):
                                     # Escape "[" at start
-                                    sentence = f"\\{utterance}"
+                                    sentence = f"\\{sentence}"
 
                                 print(sentence, file=sentences_file)
 
@@ -629,121 +441,3 @@ class RhasspyProvider:
 
 
 # -----------------------------------------------------------------------------
-
-
-class DeviceStateIntent(intent.IntentHandler):
-    intent_type = INTENT_DEVICE_STATE
-    slot_schema = {"name": str}
-
-    async def async_handle(self, intent_obj):
-        hass = intent_obj.hass
-        slots = self.async_validate_slots(intent_obj.slots)
-        name = slots["name"]["value"]
-        state = intent.async_match_state(hass, name)
-
-        response = intent_obj.create_response()
-
-        # Cheesy plural check
-        verb = "are" if name.endswith("s") else "is"
-
-        speech = f"{name} {verb} {state.state}."
-        _LOGGER.info(speech)
-        response.async_set_speech(speech)
-        return response
-
-
-def make_state_handler(intent_obj, states):
-    class StateIntent(intent.IntentHandler):
-        intent_type = intent_obj
-        slot_schema = {"name": str}
-
-        async def async_handle(self, intent_obj):
-            hass = intent_obj.hass
-            slots = self.async_validate_slots(intent_obj.slots)
-            name = slots["name"]["value"]
-            state = intent.async_match_state(hass, name)
-            is_state = state.state.lower() in states
-
-            response = intent_obj.create_response()
-
-            confirm = "yes" if is_state else "no"
-            verb = "are" if name.endswith("s") else "is"
-
-            speech = f"{confirm}. {name} {verb} {state.state}."
-            _LOGGER.info(speech)
-            response.async_set_speech(speech)
-            return response
-
-    return StateIntent()
-
-
-class TriggerAutomationIntent(intent.IntentHandler):
-    intent_type = INTENT_TRIGGER_AUTOMATION
-    slot_schema = {"name": str}
-
-    async def async_handle(self, intent_obj):
-        hass = intent_obj.hass
-        slots = self.async_validate_slots(intent_obj.slots)
-        name = slots["name"]["value"]
-        state = intent.async_match_state(hass, name)
-
-        await hass.services.async_call(
-            "automation", "trigger", {"entity_id": state.entity_id}
-        )
-
-        response = intent_obj.create_response()
-        return response
-
-
-class SetTimerIntent(intent.IntentHandler):
-    intent_type = INTENT_SET_TIMER
-    slot_schema = {"hours": str, "minutes": str, "seconds": str}
-
-    async def async_handle(self, intent_obj):
-        hass = intent_obj.hass
-        slots = self.async_validate_slots(intent_obj.slots)
-        total_seconds = SetTimerIntent.get_seconds(slots)
-
-        _LOGGER.info(f"Waiting for {total_seconds} second(s)")
-        await asyncio.sleep(total_seconds)
-
-        return await intent.async_handle(hass, DOMAIN, INTENT_TIMER_READY, {}, "")
-
-    @classmethod
-    def get_seconds(cls, slots) -> int:
-        # Compute total number of seconds for timer.
-        # Time unit values may have multiple parts, like "30 2" for 32.
-        total_seconds = 0
-        for seconds_str in pydash.get(slots, "seconds.value").strip().split():
-            total_seconds += int(seconds_str)
-
-        for minutes_str in pydash.get(slots, "minutes.value", "").strip().split():
-            total_seconds += int(minutes_str) * 60
-
-        for hours_str in pydash.get(slots, "hours.value", "").strip().split():
-            total_seconds += int(hours_str) * 60 * 60
-
-        return total_seconds
-
-
-class TriggerAutomationLaterIntent(intent.IntentHandler):
-    intent_type = INTENT_TRIGGER_AUTOMATION_LATER
-    slot_schema = {"name": str, "hours": str, "minutes": str, "seconds": str}
-
-    async def async_handle(self, intent_obj):
-        hass = intent_obj.hass
-        slots = self.async_validate_slots(intent_obj.slots)
-        name = slots["name"]["value"]
-        state = intent.async_match_state(hass, name)
-        total_seconds = SetTimerIntent.get_seconds(slots)
-
-        _LOGGER.info(f"Waiting for {total_seconds} second(s) before triggering {name}")
-        await asyncio.sleep(total_seconds)
-
-        # Trigger automation
-        await hass.services.async_call(
-            "automation", "trigger", {"entity_id": state.entity_id}
-        )
-
-        response = intent_obj.create_response()
-        return response
