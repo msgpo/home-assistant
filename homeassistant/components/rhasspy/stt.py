@@ -5,7 +5,9 @@ import time
 import asyncio
 import logging
 import shutil
+import wave
 from typing import List
+from pathlib import Path
 
 import aiohttp
 import voluptuous as vol
@@ -18,12 +20,11 @@ from homeassistant.components.stt.const import (
     AudioCodecs,
     AudioBitRates,
     AudioSampleRates,
+    AudioChannels,
     SpeechResultState,
 )
 
 from .const import SUPPORT_LANGUAGES
-from .core import maybe_convert_audio, buffer_to_wav
-from .command import WebRTCVADCommandListener, VoiceCommandResult
 
 # -----------------------------------------------------------------------------
 
@@ -33,35 +34,21 @@ _LOGGER = logging.getLogger(__name__)
 # Use webrtcvad to detect when voice command ends
 CONF_DETECT_SILENCE = "detect_silence"
 
-# True if audio should be streamed directly to Rhasspy (HTTPAudioRecorder)
-CONF_STREAM = "stream"
-
-# URL to stream audio to
-CONF_STREAM_URL = "stream_url"
-
-# Size of audio data chunk to read from stream
-CONF_CHUNK_SIZE = "chunk_size"
+# URL to POST WAV audio to
+CONF_SPEECH_URL = "speech_url"
 
 # Default settings
-DEFAULT_DETECT_SILENCE = True
-DEFAULT_STREAM = True
-DEFAULT_STREAM_URL = "http://localhost:12333"
-DEFAULT_CHUNK_SIZE = 960
+DEFAULT_SPEECH_URL = "http://localhost:12101/api/speech-to-text"
 
 # Config
 PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
-    {
-        vol.Optional(CONF_DETECT_SILENCE, default=DEFAULT_DETECT_SILENCE): bool,
-        vol.Optional(CONF_STREAM, default=DEFAULT_STREAM): bool,
-        vol.Optional(CONF_STREAM_URL, default=DEFAULT_STREAM_URL): cv.url,
-        vol.Optional(CONF_CHUNK_SIZE, default=DEFAULT_CHUNK_SIZE): cv.positive_int,
-    }
+    {vol.Optional(CONF_SPEECH_URL, default=DEFAULT_SPEECH_URL): cv.url}
 )
 
 # -----------------------------------------------------------------------------
 
 
-async def async_get_engine(hass, config):
+async def async_get_engine(hass, config, discovery_info):
     """Set up Rhasspy speech to text component."""
     provider = RhasspySTTProvider(hass, config)
     _LOGGER.info("Loaded Rhasspy stt provider")
@@ -78,23 +65,8 @@ class RhasspySTTProvider(Provider):
         self.hass = hass
         self.config = conf
 
-        # Check if sox is available for WAV conversion
-        self.sox_available: bool = len(shutil.which("sox")) > 0
-
-        # True if audio should be streamed
-        self.do_stream = conf.get(CONF_STREAM, DEFAULT_STREAM)
-
         # URL to stream microphone audio
-        self.stream_url = conf.get(CONF_STREAM_URL, DEFAULT_STREAM_URL)
-
-        # True if voice2json should wait until silence to do STT
-        self.detect_silence = conf.get(CONF_DETECT_SILENCE, DEFAULT_DETECT_SILENCE)
-
-        # Number of bytes to send at once
-        self.chunk_size = conf.get(CONF_CHUNK_SIZE, DEFAULT_CHUNK_SIZE)
-
-        # Used to detect speech/silence
-        self.listener = WebRTCVADCommandListener() if self.detect_silence else None
+        self.speech_url = conf.get(CONF_SPEECH_URL, DEFAULT_SPEECH_URL)
 
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: aiohttp.StreamReader
@@ -108,68 +80,34 @@ class RhasspySTTProvider(Provider):
         text_result = ""
 
         try:
-            if self.do_stream:
-                # Stream remotely
-                _LOGGER.debug(f"Streaming audio to {self.stream_url}")
+            header_chunk = True
+            with io.BytesIO() as wav_io:
+                wav_file = wave.open(wav_io, "wb")
+                async for audio_chunk, _ in stream.iter_chunks():
+                    if header_chunk:
+                        header_chunk = False
+                        with io.BytesIO(audio_chunk) as header_io:
+                            with wave.open(header_io) as header_file:
+                                wav_file.setnchannels(header_file.getnchannels())
+                                wav_file.setsampwidth(header_file.getsampwidth())
+                                wav_file.setframerate(header_file.getframerate())
+                    else:
+                        wav_file.writeframes(audio_chunk)
 
-                async def chunk_generator():
-                    async for audio_chunk in stream.iter_chunked(self.chunk_size):
-                        if self.sox_available:
-                            # Convert to 16-bit 16Khz mono
-                            audio_chunk = maybe_convert_audio(metadata, audio_chunk)
-                        yield audio_chunk
+                wav_file.close()
+                wav_data = wav_io.getvalue()
+                _LOGGER.info(f"Received {len(wav_data)} byte(s)")
 
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            self.stream_url, data=chunk_generator(), chunked=True
-                        ) as resp:
-                            await resp.text()
-                except aiohttp.ClientOSError:
-                    # Stream was closed
-                    pass
-
-                text_result = requests.get(self.stream_url).text.strip()
-                _LOGGER.info(text_result)
-            else:
-                # Buffer locally
-                if self.detect_silence:
-                    # Reset VAD
-                    self.listener.start_command()
-
-                all_audio = bytes()
-                speech_audio = all_audio
-
-                async for audio_chunk in stream.iter_chunked(self.chunk_size):
-                    if self.sox_available:
-                        # Convert to 16-bit 16Khz mono
-                        audio_chunk = maybe_convert_audio(metadata, audio_chunk)
-
-                    all_audio += audio_chunk
-
-                    if self.detect_silence:
-                        # Process chunk
-                        vad_result = self.listener.process_audio(audio_chunk)
-                        if vad_result == VoiceCommandResult.COMPLETE:
-                            # Command complete
-                            speech_audio = self.listener.get_audio()
-                            break
-                        elif vad_result == VoiceCommandResult.TIMEOUT:
-                            break
-
-                # Wrap up in WAV structure
-                wav_data = buffer_to_wav(speech_audio)
-
-                # POST to Rhasspy
-                headers = {"Content-Type": "audio/wav"}
-                text_result = requests.post(
-                    self.stt_url, data=wav_data, headers=headers
-                ).text
-                _LOGGER.debug(text_result)
+            # POST to Rhasspy
+            headers = {"Content-Type": "audio/wav"}
+            text_result = requests.post(
+                self.speech_url, data=wav_data, headers=headers
+            ).text
+            _LOGGER.info(text_result)
 
             return SpeechResult(text=text_result, result=SpeechResultState.SUCCESS)
         except Exception as e:
-            _LOGGER.error("async_process_audio_stream")
+            _LOGGER.exception("async_process_audio_stream")
 
         return SpeechResult(text="", result=SpeechResultState.ERROR)
 
@@ -193,19 +131,14 @@ class RhasspySTTProvider(Provider):
     @property
     def supported_bit_rates(self) -> List[AudioBitRates]:
         """Return a list of supported bitrates."""
-        if self.sox_available:
-            # Can support all bitrates
-            return list(AudioBitRates)
-        else:
-            # Only 16-bit
-            return [AudioBitRates.BITRATE_16]
+        return list(AudioBitRates)
 
     @property
     def supported_sample_rates(self) -> List[AudioSampleRates]:
         """Return a list of supported samplerates."""
-        if self.sox_available:
-            # Can support any sample rate
-            return list(AudioSampleRates)
-        else:
-            # Only 16Khz
-            return [AudioSampleRates.SAMPLERATE_16000]
+        return list(AudioSampleRates)
+
+    @property
+    def supported_channels(self) -> List[AudioChannels]:
+        """Return a list of supported channels."""
+        return list(AudioChannels)
