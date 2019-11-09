@@ -64,8 +64,8 @@ from .intent_handlers import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Base URL of Rhasspy web server
-CONF_WEB_URL = "web_url"
+# Base URL of Rhasspy web API
+CONF_API_URL = "api_url"
 
 # Language to use for generating default utterances
 CONF_LANGUAGE = "language"
@@ -98,7 +98,7 @@ CONF_INTENT_STATES = "intent_states"
 CONF_TRAIN_TIMEOUT = "train_timeout"
 
 # Default settings
-DEFAULT_WEB_URL = "http://localhost:12101"
+DEFAULT_API_URL = "http://localhost:12101/api"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_SLOTS = {}
 DEFAULT_CUSTOM_WORDS = {}
@@ -190,7 +190,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_LANGUAGE, default=DEFAULT_LANGUAGE): vol.All(
                     str, vol.In(SUPPORT_LANGUAGES)
                 ),
-                vol.Optional(CONF_WEB_URL, default=DEFAULT_WEB_URL): cv.url,
+                vol.Optional(CONF_API_URL, default=DEFAULT_API_URL): cv.url,
                 vol.Optional(
                     CONF_REGISTER_CONVERSATION, default=DEFAULT_REGISTER_CONVERSATION
                 ): bool,
@@ -231,7 +231,7 @@ async def async_setup(hass, config):
     """Set up Rhasspy integration."""
 
     conf = config.get(DOMAIN)
-    web_url = conf.get(CONF_WEB_URL, DEFAULT_WEB_URL)
+    api_url = conf.get(CONF_API_URL, DEFAULT_API_URL)
 
     register_conversation = conf.get(
         CONF_REGISTER_CONVERSATION, DEFAULT_REGISTER_CONVERSATION
@@ -239,7 +239,7 @@ async def async_setup(hass, config):
 
     if register_conversation:
         # Register converation agent
-        agent = RhasspyConversationAgent(hass, web_url)
+        agent = RhasspyConversationAgent(hass, api_url)
         async_set_agent(hass, agent)
 
         _LOGGER.info("Registered Rhasspy conversation agent")
@@ -271,19 +271,19 @@ class RhasspyProvider:
         self.config = config
 
         # Base URL of Rhasspy web server
-        self.url: str = config.get(CONF_WEB_URL, DEFAULT_WEB_URL)
+        self.api_url: str = config.get(CONF_API_URL, DEFAULT_API_URL)
 
         # URL to POST sentences.ini
-        self.sentences_url: str = urljoin(self.url, "api/sentences")
+        self.sentences_url: str = urljoin(self.api_url, "sentences")
 
         # URL to POST custom_words.txt
-        self.custom_words_url: str = urljoin(self.url, "api/custom-words")
+        self.custom_words_url: str = urljoin(self.api_url, "custom-words")
 
         # URL to POST slots
-        self.slots_url: str = urljoin(self.url, "api/slots")
+        self.slots_url: str = urljoin(self.api_url, "slots")
 
         # URL to train profile
-        self.train_url: str = urljoin(self.url, "api/train")
+        self.train_url: str = urljoin(self.api_url, "train")
 
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)

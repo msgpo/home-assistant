@@ -18,10 +18,10 @@ _LOGGER = logging.getLogger(__name__)
 class RhasspyConversationAgent(ABC):
     """Rhasspy conversation agent."""
 
-    def __init__(self, hass: core.HomeAssistant, web_url: str):
+    def __init__(self, hass: core.HomeAssistant, api_url: str):
         """Initialize the conversation agent."""
         self.hass = hass
-        self.intent_url = urljoin(web_url, "api/text-to-intent")
+        self.intent_url = urljoin(api_url, "text-to-intent")
 
     async def async_process(self, text: str) -> intent.IntentResponse:
         """Process a sentence."""
