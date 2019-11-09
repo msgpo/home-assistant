@@ -18,6 +18,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.core import Event, callback, State
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.helpers import intent
+from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
 
@@ -49,6 +50,14 @@ from .const import (
 from .conversation import RhasspyConversationAgent
 from .core import command_to_sentences
 from .default_commands import DEFAULT_INTENTS
+from .intent_handlers import (
+    DeviceStateIntent,
+    SetTimerIntent,
+    TimerReadyIntent,
+    TriggerAutomationIntent,
+    TriggerAutomationLaterIntent,
+    make_state_handler,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -79,13 +88,28 @@ CONF_REGISTER_CONVERSATION = "register_conversation"
 # List of intents for Rhasspy to handle
 CONF_HANDLE_INTENTS = "handle_intents"
 
+# Speech responses for intent handling
+CONF_RESPONSE_TEMPLATES = "reponse_templates"
+
+# State names for question intents (e.g., "on" for INTENT_IS_DEVICE_ON)
+CONF_INTENT_STATES = "intent_states"
+
 # Default settings
 DEFAULT_WEB_URL = "http://localhost:12101"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_SLOTS = {}
 DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
-DEFAULT_NAME_REPLACE = {KEY_REGEX: [{"[_-]": " "}]}
+DEFAULT_NAME_REPLACE = {
+    # English
+    # Replace dashes/underscores with spaces
+    "en-US": {KEY_REGEX: [{r"[_-]": " "}]},
+    #
+    # French
+    # Split dashed words (est-ce -> est -ce)
+    # Replace dashes with spaces
+    "fr-FR": {KEY_REGEX: [{r"-": " -"}, {r"_": " "}]},
+}
 
 DEFAULT_HANDLE_INTENTS = [
     INTENT_IS_DEVICE_ON,
@@ -99,7 +123,36 @@ DEFAULT_HANDLE_INTENTS = [
     INTENT_TIMER_READY,
 ]
 
-# DEFAULT_INTENT_RESPONSES: {INTENT_IS_DEVICE_ON: "{% %}"}
+DEFAULT_RESPONSE_TEMPLATES = {
+    "en-US": {
+        INTENT_IS_DEVICE_ON: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} on."
+        ),
+        INTENT_IS_DEVICE_OFF: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} off."
+        ),
+        INTENT_IS_COVER_OPEN: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} open."
+        ),
+        INTENT_IS_COVER_CLOSED: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} closed."
+        ),
+        INTENT_DEVICE_STATE: T(
+            "{{ entity.name }} {% 'are' if entity.name.endswith('s') else 'is' %} {{ entity.state }}."
+        ),
+        INTENT_TIMER_READY: T("Timer is ready."),
+        INTENT_TRIGGER_AUTOMATION: T("Triggered {{ automation.name }}."),
+    }
+}
+
+DEFAULT_INTENT_STATES = {
+    "en-US": {
+        INTENT_IS_DEVICE_ON: ["on"],
+        INTENT_IS_DEVICE_OFF: ["off"],
+        INTENT_IS_COVER_OPEN: ["open"],
+        INTENT_IS_COVER_CLOSED: ["closed"],
+    }
+}
 
 # Config
 COMMAND_SCHEMA = vol.Schema(
@@ -122,6 +175,7 @@ COMMAND_SCHEMA = vol.Schema(
         vol.Optional(CONF_HANDLE_INTENTS, DEFAULT_HANDLE_INTENTS): vol.Schema(
             cv.ensure_list, [str]
         ),
+        vol.Optional(CONF_RESPONSE_TEMPLATES): vol.Schema({str: cv.template}),
     }
 )
 
@@ -145,12 +199,15 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_INTENTS): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str, COMMAND_SCHEMA])}
                 ),
-                vol.Optional(CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE): {
+                vol.Optional(CONF_NAME_REPLACE): {
                     vol.Optional(KEY_REGEX, {}): vol.All(
                         cv.ensure_list, [vol.Schema({str: str})]
                     ),
                     vol.Optional(KEY_ENTITIES, {}): vol.Schema({cv.entity_id: str}),
                 },
+                vol.Optional(CONF_INTENT_STATES): vol.Schema(
+                    {str: vol.All(cv.ensure_list, [str])}
+                ),
             }
         )
     },
@@ -232,6 +289,11 @@ class RhasspyProvider:
         # lower-cased entity names in self.entities
         self.entity_names_lower: Set[str] = set()
 
+        # Language-specific settings
+        self.name_replace = self._get_for_language(
+            CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE
+        )
+
         # Threads/events
         self.train_thread = None
         self.train_event = threading.Event()
@@ -245,7 +307,70 @@ class RhasspyProvider:
     async def async_initialize(self):
         """Initialize Rhasspy provider."""
 
+        # Get intent responses
+        response_templates = dict(
+            DEFAULT_RESPONSE_TEMPLATES.get(
+                self.language, DEFAULT_RESPONSE_TEMPLATES[DEFAULT_LANGUAGE]
+            )
+        )
+        if CONF_RESPONSE_TEMPLATES in self.config:
+            for intent_obj, template in self.config[CONF_RESPONSE_TEMPLATES].items():
+                # Overwrite default
+                response_templates[intent_obj] = template
+
+        # Get states of intents
+        intent_states = dict(
+            DEFAULT_INTENT_STATES.get(
+                self.language, DEFAULT_INTENT_STATES[DEFAULT_LANGUAGE]
+            )
+        )
+        if CONF_INTENT_STATES in self.config:
+            for intent_obj, states in self.config[CONF_INTENT_STATES].items():
+                intent_states[intent_obj] = states
+
         # Register intent handlers
+        handle_intents = set(
+            self.config.get(CONF_HANDLE_INTENTS, DEFAULT_HANDLE_INTENTS)
+        )
+
+        if INTENT_DEVICE_STATE in handle_intents:
+            intent.async_register(
+                self.hass, DeviceStateIntent(response_templates[INTENT_DEVICE_STATE])
+            )
+
+        for state_intent in [
+            INTENT_IS_DEVICE_ON,
+            INTENT_IS_DEVICE_OFF,
+            INTENT_IS_COVER_OPEN,
+            INTENT_IS_COVER_CLOSED,
+        ]:
+            if state_intent in handle_intents:
+                intent.async_register(
+                    self.hass,
+                    make_state_handler(
+                        state_intent,
+                        intent_states[state_intent],
+                        response_templates[state_intent],
+                    ),
+                )
+
+        if INTENT_SET_TIMER in handle_intents:
+            intent.async_register(self.hass, SetTimerIntent())
+
+        if INTENT_TIMER_READY in handle_intents:
+            intent.async_register(
+                self.hass, TimerReadyIntent(response_templates[INTENT_TIMER_READY])
+            )
+
+        if INTENT_TRIGGER_AUTOMATION in handle_intents:
+            intent.async_register(
+                self.hass,
+                TriggerAutomationIntent(response_templates[INTENT_TRIGGER_AUTOMATION]),
+            )
+
+        if INTENT_TRIGGER_AUTOMATION_LATER in handle_intents:
+            intent.async_register(self.hass, TriggerAutomationLaterIntent())
+
         # for intent_obj in self.generate_utterances:
         #     if intent_obj == INTENT_DEVICE_STATE:
         #         intent.async_register(self.hass, DeviceStateIntent())
@@ -268,9 +393,14 @@ class RhasspyProvider:
     def component_loaded(self, event):
         """Handle a new component loaded."""
         old_entity_count = len(self.entities)
-        name_replace = self.config.get(CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE)
-        entity_name_map = name_replace.get(KEY_ENTITIES, {})
-        name_regexes = name_replace.get(KEY_REGEX, {})
+
+        # User-defined entity names for speech to text
+        entity_name_map = self.name_replace.get(KEY_ENTITIES, {})
+
+        # Regex replacements for cleaning names
+        name_regexes = self.name_replace.get(KEY_REGEX, {})
+
+        # Language used for num2words (en-US -> en_US)
         num2words_lang = self.language.replace("-", "_")
 
         for state in self.hass.states.async_all():
@@ -344,14 +474,15 @@ class RhasspyProvider:
 
             try:
                 sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
-                if CONF_INTENTS in self.config:
-                    # User-provided commands
-                    intent_commands = self.config[CONF_INTENTS]
-                else:
-                    # Default commands
-                    intent_commands = DEFAULT_INTENTS.get(
-                        self.language, DEFAULT_INTENTS.get(DEFAULT_LANGUAGE)
+
+                # Override defaults with user commands
+                intent_commands = dict(
+                    DEFAULT_INTENTS.get(
+                        self.language, DEFAULT_INTENTS[DEFAULT_LANGUAGE]
                     )
+                )
+                for intent_type, commands in self.config.get(CONF_INTENTS, {}).items():
+                    intent_commands[intent_type] = commands
 
                 # Generate commands
                 for intent_type, commands in intent_commands.items():
@@ -438,6 +569,16 @@ class RhasspyProvider:
 
             self.train_event.set()
             self.train_timer_event.clear()
+
+    # -------------------------------------------------------------------------
+
+    def _get_for_language(self, config_key, default_values):
+        if config_key in self.config:
+            # User-specified value
+            return self.cofig[config_key]
+
+        # Try current language, fall back to default language (U.S. English)
+        return default_values.get(self.language, default_values[DEFAULT_LANGUAGE])
 
 
 # -----------------------------------------------------------------------------
