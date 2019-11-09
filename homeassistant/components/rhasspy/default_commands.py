@@ -1,6 +1,7 @@
 from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
+from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
 
 from .const import (
     INTENT_IS_DEVICE_ON,
@@ -60,6 +61,20 @@ DEFAULT_INTENTS = {
                 KEY_COMMAND_TEMPLATES: [
                     T("toggle [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"),
                     T("[the|a|an] ({{ entity_name }}){name:{{ entity.name }}} toggle"),
+                ],
+            }
+        ],
+        INTENT_ADD_ITEM: [
+            {
+                KEY_COMMAND_TEMPLATES: [
+                    T("add [the|a|an] ({{ clean_item_name }}){name:{{ item_name }}} to [my] shopping list"),
+                ],
+            }
+        ],
+        INTENT_LAST_ITEMS: [
+            {
+                KEY_COMMANDS: [
+                    "[list | tell me] shopping list [items]"
                 ],
             }
         ],

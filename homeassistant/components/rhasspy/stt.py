@@ -6,6 +6,7 @@ import asyncio
 import logging
 import shutil
 import wave
+from urllib.parse import urljoin
 from typing import List
 from pathlib import Path
 
@@ -38,7 +39,7 @@ DEFAULT_SPEECH_URL = "http://localhost:12101/api/speech-to-text"
 
 # Config
 PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
-    {vol.Optional(CONF_SPEECH_URL, default=DEFAULT_SPEECH_URL): cv.url}
+    {vol.Optional(CONF_SPEECH_URL): cv.url}
 )
 
 # -----------------------------------------------------------------------------
@@ -62,7 +63,7 @@ class RhasspySTTProvider(Provider):
         self.config = conf
 
         # URL to stream microphone audio
-        self.speech_url = conf.get(CONF_SPEECH_URL, DEFAULT_SPEECH_URL)
+        self.speech_url = conf.get(CONF_SPEECH_URL, None)
 
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: aiohttp.StreamReader
@@ -71,6 +72,15 @@ class RhasspySTTProvider(Provider):
 
         Only streaming of content are allow!
         """
+
+        if self.speech_url is None:
+            # Try to get API URL from Rhasspy provider
+            provider = self.hass.data.get(DOMAIN)
+            if provider is not None:
+                self.speech_url = urljoin(provider.api_url, "/speech-to-text")
+            else:
+                # Use default
+                self.speech_url = DEFAULT_SPEECH_URL
 
         _LOGGER.debug("Receiving audio")
         text_result = ""

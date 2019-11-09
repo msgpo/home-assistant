@@ -21,6 +21,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
+from homeassistant.components.shopping_list import INTENT_ADD_ITEM
 
 from .const import (
     DOMAIN,
@@ -97,6 +98,8 @@ CONF_INTENT_STATES = "intent_states"
 # Seconds before re-training occurs after new component loaded
 CONF_TRAIN_TIMEOUT = "train_timeout"
 
+CONF_SHOPPING_LIST_ITEMS = "shopping_list_items"
+
 # Default settings
 DEFAULT_API_URL = "http://localhost:12101/api"
 DEFAULT_LANGUAGE = "en-US"
@@ -104,6 +107,8 @@ DEFAULT_SLOTS = {}
 DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
 DEFAULT_TRAIN_TIMEOUT = 1.0
+DEFAULT_SHOPPING_LIST_ITEMS = []
+
 DEFAULT_NAME_REPLACE = {
     # English
     # Replace dashes/underscores with spaces
@@ -213,6 +218,9 @@ CONFIG_SCHEMA = vol.Schema(
                     {str: vol.All(cv.ensure_list, [str])}
                 ),
                 vol.Optional(CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT): float,
+                vol.Optional(
+                    CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
+                ): vol.All(cv.ensure_list, [str]),
             }
         )
     },
@@ -274,16 +282,16 @@ class RhasspyProvider:
         self.api_url: str = config.get(CONF_API_URL, DEFAULT_API_URL)
 
         # URL to POST sentences.ini
-        self.sentences_url: str = urljoin(self.api_url, "sentences")
+        self.sentences_url: str = urljoin(self.api_url, "/sentences")
 
         # URL to POST custom_words.txt
-        self.custom_words_url: str = urljoin(self.api_url, "custom-words")
+        self.custom_words_url: str = urljoin(self.api_url, "/custom-words")
 
         # URL to POST slots
-        self.slots_url: str = urljoin(self.api_url, "slots")
+        self.slots_url: str = urljoin(self.api_url, "/slots")
 
         # URL to train profile
-        self.train_url: str = urljoin(self.api_url, "train")
+        self.train_url: str = urljoin(self.api_url, "/train")
 
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
@@ -298,6 +306,15 @@ class RhasspyProvider:
         self.name_replace = self._get_for_language(
             CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE
         )
+
+        # Regex replacements for cleaning names
+        self.name_regexes = self.name_replace.get(KEY_REGEX, {})
+
+        # Language used for num2words (en-US -> en_US)
+        self.num2words_lang = self.language.replace("-", "_")
+        if self.language == "sv-SV":
+            # Use Danish numbers, since Swedish is not supported.
+            self.num2words_lang = "dk"
 
         # Threads/events
         self.train_thread = None
@@ -390,12 +407,6 @@ class RhasspyProvider:
         # User-defined entity names for speech to text
         entity_name_map = self.name_replace.get(KEY_ENTITIES, {})
 
-        # Regex replacements for cleaning names
-        name_regexes = self.name_replace.get(KEY_REGEX, {})
-
-        # Language used for num2words (en-US -> en_US)
-        num2words_lang = self.language.replace("-", "_")
-
         for state in self.hass.states.async_all():
             # Skip entities that have already been loaded
             if state.entity_id in self.entities:
@@ -406,27 +417,7 @@ class RhasspyProvider:
                 entity_name = entity_name_map[state.entity_id]
             else:
                 # Try to clean name
-                entity_name = state.name
-
-                # Do number replacement
-                words = re.split(r"\s+", entity_name)
-                for i, word in enumerate(words):
-                    try:
-                        number = float(word)
-                        try:
-                            words[i] = num2words(number, lang=num2words_lang)
-                        except NotImplementedError:
-                            # Use default language (U.S. English)
-                            words[i] = num2words(number)
-                    except ValueError:
-                        pass
-
-                entity_name = " ".join(words)
-
-                # Do regex replacements
-                for replacements in name_regexes:
-                    for pattern, replacement in replacements.items():
-                        entity_name = re.sub(pattern, replacement, entity_name)
+                entity_name = self._clean_name(state.name)
 
             # Ensure we don't duplicate names
             entity_name_lower = entity_name.lower()
@@ -438,6 +429,29 @@ class RhasspyProvider:
         if len(self.entities) > old_entity_count:
             _LOGGER.info("Need to retrain profile")
             self.schedule_retrain()
+
+    def _clean_name(self, name: str) -> str:
+        # Do number replacement
+        words = re.split(r"\s+", name)
+        for i, word in enumerate(words):
+            try:
+                number = float(word)
+                try:
+                    words[i] = num2words(number, lang=self.num2words_lang)
+                except NotImplementedError:
+                    # Use default language (U.S. English)
+                    words[i] = num2words(number)
+            except ValueError:
+                pass
+
+        name = " ".join(words)
+
+        # Do regex replacements
+        for replacements in self.name_regexes:
+            for pattern, replacement in replacements.items():
+                name = re.sub(pattern, replacement, name)
+
+        return name
 
     # -------------------------------------------------------------------------
 
@@ -480,11 +494,20 @@ class RhasspyProvider:
 
                 # Generate commands
                 for intent_type, commands in intent_commands.items():
-                    for command in commands:
-                        for sentence in command_to_sentences(
-                            self.hass, command, self.entities
-                        ):
-                            sentences_by_intent[intent_type].append(sentence)
+                    if intent_type == INTENT_ADD_ITEM:
+                        # Special case for shopping list
+                        sentences_by_intent[intent_type].extend(
+                            self._get_shopping_list_commands(
+                                intent_commands.get(INTENT_ADD_ITEM, [])
+                            )
+                        )
+                    else:
+                        # All other intents
+                        for command in commands:
+                            for sentence in command_to_sentences(
+                                self.hass, command, self.entities
+                            ):
+                                sentences_by_intent[intent_type].append(sentence)
 
                 # Check for custom sentences
                 num_sentences = sum(len(s) for s in sentences_by_intent.values())
@@ -563,6 +586,32 @@ class RhasspyProvider:
 
             self.train_event.set()
             self.train_timer_event.clear()
+
+    def _get_shopping_list_commands(self, commands):
+        possible_items = self.config.get(
+            CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
+        )
+
+        # Generate clean item names
+        item_names = {
+            item_name: self._clean_name(item_name) for item_name in possible_items
+        }
+
+        for command in commands:
+            if KEY_COMMAND_TEMPLATE in command:
+                templates = [command[KEY_COMMAND_TEMPLATE]]
+            elif KEY_COMMAND_TEMPLATES in command:
+                templates = command[KEY_COMMAND_TEMPLATES]
+            else:
+                # No templates
+                continue
+
+            for item_name, clean_item_name in item_names.items():
+                for template in templates:
+                    template.hass = self.hass
+                    yield template.async_render(
+                        {"item_name": item_name, "clean_item_name": clean_item_name}
+                    )
 
     # -------------------------------------------------------------------------
 
