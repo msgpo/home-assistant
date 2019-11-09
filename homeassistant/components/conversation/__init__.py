@@ -77,6 +77,7 @@ async def async_setup(hass, config):
     )
 
     hass.http.register_view(ConversationProcessView(process))
+    hass.http.register_view(ConversationHandleView())
 
     return True
 
@@ -105,5 +106,42 @@ class ConversationProcessView(http.HomeAssistantView):
         if intent_result is None:
             intent_result = intent.IntentResponse()
             intent_result.async_set_speech("Sorry, I didn't understand that")
+
+        return self.json(intent_result)
+
+
+class ConversationHandleView(http.HomeAssistantView):
+    """View to handle intents from JSON."""
+
+    url = "/api/conversation/handle"
+    name = "api:conversation:handle"
+
+    @RequestDataValidator(
+        vol.Schema(
+            {
+                vol.Required("intent"): cv.string,
+                vol.Optional("data"): vol.Schema({cv.string: object}),
+            }
+        )
+    )
+    async def post(self, request, data):
+        """Send a request for processing."""
+        hass = request.app["hass"]
+
+        try:
+            intent_name = data["intent"]
+            slots = {
+                key: {"value": value} for key, value in data.get("data", {}).items()
+            }
+            intent_result = await intent.async_handle(
+                hass, DOMAIN, intent_name, slots, ""
+            )
+        except intent.IntentHandleError as err:
+            intent_result = intent.IntentResponse()
+            intent_result.async_set_speech(str(err))
+
+        if intent_result is None:
+            intent_result = intent.IntentResponse()
+            intent_result.async_set_speech("Sorry, I couldn't handle that")
 
         return self.json(intent_result)
