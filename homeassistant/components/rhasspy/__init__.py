@@ -94,12 +94,16 @@ CONF_RESPONSE_TEMPLATES = "reponse_templates"
 # State names for question intents (e.g., "on" for INTENT_IS_DEVICE_ON)
 CONF_INTENT_STATES = "intent_states"
 
+# Seconds before re-training occurs after new component loaded
+CONF_TRAIN_TIMEOUT = "train_timeout"
+
 # Default settings
 DEFAULT_WEB_URL = "http://localhost:12101"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_SLOTS = {}
 DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
+DEFAULT_TRAIN_TIMEOUT = 1.0
 DEFAULT_NAME_REPLACE = {
     # English
     # Replace dashes/underscores with spaces
@@ -208,6 +212,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_INTENT_STATES): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str])}
                 ),
+                vol.Optional(CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT): float,
             }
         )
     },
@@ -300,7 +305,9 @@ class RhasspyProvider:
 
         self.train_timer_thread = None
         self.train_timer_event = threading.Event()
-        self.train_timer_seconds = 1
+        self.train_timer_seconds = self.config.get(
+            CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT
+        )
 
     # -------------------------------------------------------------------------
 
@@ -338,6 +345,7 @@ class RhasspyProvider:
                 self.hass, DeviceStateIntent(response_templates[INTENT_DEVICE_STATE])
             )
 
+        # Generate handlers for specific states (on, open, etc.)
         for state_intent in [
             INTENT_IS_DEVICE_ON,
             INTENT_IS_DEVICE_OFF,
@@ -371,21 +379,6 @@ class RhasspyProvider:
         if INTENT_TRIGGER_AUTOMATION_LATER in handle_intents:
             intent.async_register(self.hass, TriggerAutomationLaterIntent())
 
-        # for intent_obj in self.generate_utterances:
-        #     if intent_obj == INTENT_DEVICE_STATE:
-        #         intent.async_register(self.hass, DeviceStateIntent())
-        #     elif intent_obj == INTENT_TRIGGER_AUTOMATION:
-        #         intent.async_register(self.hass, TriggerAutomationIntent())
-        #     elif intent_obj == INTENT_TRIGGER_AUTOMATION_LATER:
-        #         intent.async_register(self.hass, TriggerAutomationLaterIntent())
-        #     elif intent_obj == INTENT_SET_TIMER:
-        #         intent.async_register(self.hass, SetTimerIntent())
-
-        # intent_states = self.config.get(CONF_INTENT_STATES, DEFAULT_INTENT_STATES)
-        # for intent_obj, states in intent_states.items():
-        #     if intent_obj in self.generate_utterances:
-        #         intent.async_register(self.hass, make_state_handler(intent_obj, states))
-
         # Register for component loaded event
         self.hass.bus.async_listen(EVENT_COMPONENT_LOADED, self.component_loaded)
 
@@ -404,6 +397,7 @@ class RhasspyProvider:
         num2words_lang = self.language.replace("-", "_")
 
         for state in self.hass.states.async_all():
+            # Skip entities that have already been loaded
             if state.entity_id in self.entities:
                 continue
 
@@ -573,6 +567,7 @@ class RhasspyProvider:
     # -------------------------------------------------------------------------
 
     def _get_for_language(self, config_key, default_values):
+        """Gets language-specific values for a configuration option."""
         if config_key in self.config:
             # User-specified value
             return self.cofig[config_key]

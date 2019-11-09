@@ -30,10 +30,6 @@ from .const import SUPPORT_LANGUAGES
 
 _LOGGER = logging.getLogger(__name__)
 
-
-# Use webrtcvad to detect when voice command ends
-CONF_DETECT_SILENCE = "detect_silence"
-
 # URL to POST WAV audio to
 CONF_SPEECH_URL = "speech_url"
 
@@ -80,6 +76,7 @@ class RhasspySTTProvider(Provider):
         text_result = ""
 
         try:
+            # First chunk is a WAV header
             header_chunk = True
             with io.BytesIO() as wav_io:
                 wav_file = wave.open(wav_io, "wb")
@@ -92,6 +89,7 @@ class RhasspySTTProvider(Provider):
                                 wav_file.setsampwidth(header_file.getsampwidth())
                                 wav_file.setframerate(header_file.getframerate())
                     else:
+                        # Everything after first chunk is audio data
                         wav_file.writeframes(audio_chunk)
 
                 wav_file.close()
@@ -103,7 +101,7 @@ class RhasspySTTProvider(Provider):
             text_result = requests.post(
                 self.speech_url, data=wav_data, headers=headers
             ).text
-            _LOGGER.info(text_result)
+            _LOGGER.debug(text_result)
 
             return SpeechResult(text=text_result, result=SpeechResultState.SUCCESS)
         except Exception as e:
