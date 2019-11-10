@@ -21,7 +21,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
-from homeassistant.components.shopping_list import INTENT_ADD_ITEM
+from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
 
 from .const import (
     DOMAIN,
@@ -50,7 +50,7 @@ from .const import (
 
 from .conversation import RhasspyConversationAgent
 from .core import command_to_sentences
-from .default_commands import DEFAULT_INTENTS
+from .default_commands import DEFAULT_INTENT_COMMANDS
 from .intent_handlers import (
     DeviceStateIntent,
     SetTimerIntent,
@@ -72,7 +72,7 @@ CONF_API_URL = "api_url"
 CONF_LANGUAGE = "language"
 
 # User defined commands by intent
-CONF_INTENTS = "intents"
+CONF_INTENT_COMMANDS = "intent_commands"
 
 # User defined slots and values
 CONF_SLOTS = "slots"
@@ -98,7 +98,11 @@ CONF_INTENT_STATES = "intent_states"
 # Seconds before re-training occurs after new component loaded
 CONF_TRAIN_TIMEOUT = "train_timeout"
 
+# List of possible items that can be added to the shopping list
 CONF_SHOPPING_LIST_ITEMS = "shopping_list_items"
+
+# If True, don't generate any default voice commands
+CONF_NO_DEFAULT_COMMANDS = "no_default_commands"
 
 # Default settings
 DEFAULT_API_URL = "http://localhost:12101/api"
@@ -108,6 +112,7 @@ DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
 DEFAULT_TRAIN_TIMEOUT = 1.0
 DEFAULT_SHOPPING_LIST_ITEMS = []
+DEFAULT_NO_DEFAULT_COMMANDS = False
 
 DEFAULT_NAME_REPLACE = {
     # English
@@ -205,7 +210,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_CUSTOM_WORDS, DEFAULT_CUSTOM_WORDS): vol.Schema(
                     {str: str}
                 ),
-                vol.Optional(CONF_INTENTS): vol.Schema(
+                vol.Optional(CONF_INTENT_COMMANDS): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str, COMMAND_SCHEMA])}
                 ),
                 vol.Optional(CONF_NAME_REPLACE): {
@@ -221,6 +226,9 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(
                     CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
                 ): vol.All(cv.ensure_list, [str]),
+                vol.Optional(
+                    CONF_NO_DEFAULT_COMMANDS, default=DEFAULT_NO_DEFAULT_COMMANDS
+                ): bool,
             }
         )
     },
@@ -240,6 +248,9 @@ async def async_setup(hass, config):
 
     conf = config.get(DOMAIN)
     api_url = conf.get(CONF_API_URL, DEFAULT_API_URL)
+    if not api_url.endswith("/"):
+        api_url = api_url + "/"
+        conf[CONF_API_URL] = api_url
 
     register_conversation = conf.get(
         CONF_REGISTER_CONVERSATION, DEFAULT_REGISTER_CONVERSATION
@@ -282,16 +293,16 @@ class RhasspyProvider:
         self.api_url: str = config.get(CONF_API_URL, DEFAULT_API_URL)
 
         # URL to POST sentences.ini
-        self.sentences_url: str = urljoin(self.api_url, "/sentences")
+        self.sentences_url: str = urljoin(self.api_url, "sentences")
 
         # URL to POST custom_words.txt
-        self.custom_words_url: str = urljoin(self.api_url, "/custom-words")
+        self.custom_words_url: str = urljoin(self.api_url, "custom-words")
 
         # URL to POST slots
-        self.slots_url: str = urljoin(self.api_url, "/slots")
+        self.slots_url: str = urljoin(self.api_url, "slots")
 
         # URL to train profile
-        self.train_url: str = urljoin(self.api_url, "/train")
+        self.train_url: str = urljoin(self.api_url, "train")
 
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
@@ -474,7 +485,7 @@ class RhasspyProvider:
         self.train_timer_event.set()
 
     def _training_thread_proc(self):
-        """Re-trains voice2json provider. Works with a timer to avoid too many re-trains."""
+        """Re-trains Rhasspy. Works with a timer to avoid too many re-trains."""
         while True:
             # Wait for re-train request
             self.train_event.wait()
@@ -483,13 +494,23 @@ class RhasspyProvider:
             try:
                 sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
 
-                # Override defaults with user commands
-                intent_commands = dict(
-                    DEFAULT_INTENTS.get(
-                        self.language, DEFAULT_INTENTS[DEFAULT_LANGUAGE]
+                if self.config.get(
+                    CONF_NO_DEFAULT_COMMANDS, DEFAULT_NO_DEFAULT_COMMANDS
+                ):
+                    # No default commands
+                    intent_commands = {}
+                else:
+                    # Use default commands
+                    intent_commands = dict(
+                        DEFAULT_INTENT_COMMANDS.get(
+                            self.language, DEFAULT_INTENT_COMMANDS[DEFAULT_LANGUAGE]
+                        )
                     )
-                )
-                for intent_type, commands in self.config.get(CONF_INTENTS, {}).items():
+
+                # Override defaults with user commands
+                for intent_type, commands in self.config.get(
+                    CONF_INTENT_COMMANDS, {}
+                ).items():
                     intent_commands[intent_type] = commands
 
                 # Generate commands
@@ -512,7 +533,7 @@ class RhasspyProvider:
                 # Check for custom sentences
                 num_sentences = sum(len(s) for s in sentences_by_intent.values())
                 if num_sentences > 0:
-                    _LOGGER.debug("Writing sentences ({self.sentences_url})")
+                    _LOGGER.debug(f"Writing sentences ({self.sentences_url})")
 
                     # Generate custom sentences.ini
                     with io.StringIO() as sentences_file:
@@ -530,6 +551,8 @@ class RhasspyProvider:
 
                         # POST sentences.ini
                         requests.post(self.sentences_url, sentences_file.getvalue())
+                else:
+                    _LOGGER.warning("No commands generated. Not overwriting sentences.")
 
                 # Check for custom words
                 custom_words = self.config.get("custom_words", {})

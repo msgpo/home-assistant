@@ -22,7 +22,7 @@ from .const import (
     KEY_ENTITIES,
 )
 
-DEFAULT_INTENTS = {
+DEFAULT_INTENT_COMMANDS = {
     "en-US": {
         intent.INTENT_TURN_ON: [
             {
@@ -67,15 +67,18 @@ DEFAULT_INTENTS = {
         INTENT_ADD_ITEM: [
             {
                 KEY_COMMAND_TEMPLATES: [
-                    T("add [the|a|an] ({{ clean_item_name }}){name:{{ item_name }}} to [my] shopping list"),
-                ],
+                    T(
+                        "add [the|a|an] ({{ clean_item_name }}){name:{{ item_name }}} to [my] shopping list"
+                    )
+                ]
             }
         ],
         INTENT_LAST_ITEMS: [
             {
                 KEY_COMMANDS: [
-                    "[list | tell me] shopping list [items]"
-                ],
+                    "what is on my shopping list",
+                    "[list | tell me] [my] shopping list [items]",
+                ]
             }
         ],
         INTENT_OPEN_COVER: [
