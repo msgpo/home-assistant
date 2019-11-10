@@ -3,10 +3,12 @@ import io
 import subprocess
 import wave
 import logging
-from typing import Iterable, Set
+from typing import Iterable, Set, Dict
 
+import attr
 import pydash
 
+from homeassistant.core import State
 from homeassistant.helpers.template import Template
 from homeassistant.components.stt import SpeechMetadata
 
@@ -26,6 +28,15 @@ from .const import (
 # -----------------------------------------------------------------------------
 
 _LOGGER = logging.getLogger("rhasspy")
+
+
+@attr.s
+class EntityCommandInfo:
+    entity_id: str = attr.ib()
+    friendly_name: str = attr.ib()
+    speech_name: str = attr.ib()
+    state: State = attr.ib()
+
 
 # -----------------------------------------------------------------------------
 # Audio Functions
@@ -90,7 +101,9 @@ def buffer_to_wav(buffer: bytes) -> bytes:
 # -----------------------------------------------------------------------------
 
 
-def command_to_sentences(hass, command, entities, template_dict={}) -> Iterable[str]:
+def command_to_sentences(
+    hass, command, entities: Dict[str, EntityCommandInfo], template_dict={}
+) -> Iterable[str]:
     if isinstance(command, str):
         # Literal sentence
         yield command
@@ -126,16 +139,25 @@ def command_to_sentences(hass, command, entities, template_dict={}) -> Iterable[
             commands = command[KEY_COMMAND_TEMPLATES]
             have_templates = True
 
+        # Entities to include
         possible_entity_ids: Set[str] = set()
+
+        # Lower-cased speech names already used.
+        # Avoids duplicate entities.
+        used_names: Set[str] = set()
+
         if have_templates:
             # Gather all entities to be used in command templates
             if KEY_INCLUDE in command:
                 include_domains = set(
                     pydash.get(command, f"{KEY_INCLUDE}.{KEY_DOMAINS}", [])
                 )
-                for entity_id, (state, _) in entities.items():
-                    if state.domain in include_domains:
-                        possible_entity_ids.add(entity_id)
+                for entity_id, info in entities.items():
+                    if info.state.domain in include_domains:
+                        speech_name_lower = info.speech_name.lower()
+                        if speech_name_lower not in used_names:
+                            possible_entity_ids.add(entity_id)
+                            used_names.add(speech_name_lower)
 
                 include_entities = pydash.get(
                     command, f"{KEY_INCLUDE}.{KEY_ENTITIES}", []
@@ -163,8 +185,12 @@ def command_to_sentences(hass, command, entities, template_dict={}) -> Iterable[
                     if entity_id not in entities:
                         continue
 
-                    state, entity_name = entities.get(entity_id)
-                    template_dict = {"entity": state, "entity_name": entity_name}
+                    info = entities.get(entity_id)
+                    template_dict = {
+                        "entity": info.state,
+                        "speech_name": info.speech_name,
+                        "friendly_name": info.friendly_name,
+                    }
                     command_strs.extend(
                         command_to_sentences(
                             hass, sub_command, entities, template_dict=template_dict

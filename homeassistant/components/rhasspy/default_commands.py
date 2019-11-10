@@ -2,6 +2,7 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
 from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
+from homeassistant.components.light import INTENT_SET
 
 from .const import (
     INTENT_IS_DEVICE_ON,
@@ -31,8 +32,8 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("turn on [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"),
-                    T("turn [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} on"),
+                    T("turn on [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
+                    T("turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"),
                 ],
             }
         ],
@@ -44,10 +45,10 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "turn off [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"
+                        "turn off [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
                     ),
                     T(
-                        "turn [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} off"
+                        "turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} off"
                     ),
                 ],
             }
@@ -59,8 +60,8 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("toggle [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"),
-                    T("[the|a|an] ({{ entity_name }}){name:{{ entity.name }}} toggle"),
+                    T("toggle [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
+                    T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} toggle"),
                 ],
             }
         ],
@@ -88,8 +89,8 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_covers"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("open [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"),
-                    T("[the|a|an] ({{ entity_name }}){name:{{ entity.name }}} open"),
+                    T("open [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
+                    T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} open"),
                 ],
             }
         ],
@@ -100,8 +101,30 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_covers"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("close [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"),
-                    T("[the|a|an] ({{ entity_name }}){name:{{ entity.name }}} close"),
+                    T("close [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
+                    T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} close"),
+                ],
+            }
+        ],
+        INTENT_SET: [
+            {
+                KEY_INCLUDE: {
+                    KEY_DOMAINS: ["light"],
+                    KEY_ENTITIES: ["group.all_lights"],
+                },
+                KEY_COMMAND_TEMPLATES: [
+                    T(
+                        "set [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [to] ($light_color){color}"
+                    ),
+                    T(
+                        "set [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [brightness [to] | to brightness] ($number_0_100){brightness}"
+                    ),
+                    T(
+                        "set [the] brightness [of] [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [to] ($number_0_100){brightness}"
+                    ),
+                    T(
+                        "set [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [to] (maximum){brightness:100} brightness"
+                    ),
                 ],
             }
         ],
@@ -123,10 +146,10 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "what (is | are) [the|a|an] (state | states) of [the|a|an] ({{ entity_name }}){name:{{ entity.name }}}"
+                        "what (is | are) [the|a|an] (state | states) of [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
                     ),
                     T(
-                        "what [is | are] [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} (state | states)"
+                        "what [is | are] [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} (state | states)"
                     ),
                 ],
             }
@@ -139,7 +162,7 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(is | are) [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} on"
+                        "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"
                     )
                 ],
             }
@@ -152,7 +175,7 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(is | are) [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} off"
+                        "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} off"
                     )
                 ],
             }
@@ -165,7 +188,7 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(is | are) [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} open"
+                        "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} open"
                     )
                 ],
             }
@@ -178,7 +201,7 @@ DEFAULT_INTENT_COMMANDS = {
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(is | are) [the|a|an] ({{ entity_name }}){name:{{ entity.name }}} closed"
+                        "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} closed"
                     )
                 ],
             }
@@ -188,7 +211,7 @@ DEFAULT_INTENT_COMMANDS = {
                 KEY_INCLUDE: {KEY_DOMAINS: ["automation"]},
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(run | execute | trigger) [program | automation] ({{ entity_name }}){name:{{ entity.name }}}"
+                        "(run | execute | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}}"
                     )
                 ],
             }
@@ -198,10 +221,10 @@ DEFAULT_INTENT_COMMANDS = {
                 KEY_INCLUDE: {KEY_DOMAINS: ["automation"]},
                 KEY_COMMAND_TEMPLATES: [
                     T(
-                        "(run | execute | trigger) [program | automation] ({{ entity_name }}){name:{{ entity.name }}} (in | after) <SetTimer.time_expr>"
+                        "(run | execute | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}} (in | after) <SetTimer.time_expr>"
                     ),
                     T(
-                        "(in | after) <SetTimer.time_expr> (run | trigger) [program | automation] ({{ entity_name }}){name:{{ entity.name }}}"
+                        "(in | after) <SetTimer.time_expr> (run | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}}"
                     ),
                 ],
             }

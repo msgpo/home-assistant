@@ -15,13 +15,15 @@ import voluptuous as vol
 from num2words import num2words
 
 import homeassistant.helpers.config_validation as cv
+import homeassistant.util.color as color_util
 from homeassistant.core import Event, callback, State
-from homeassistant.const import EVENT_COMPONENT_LOADED
+from homeassistant.const import EVENT_COMPONENT_LOADED, ATTR_FRIENDLY_NAME
 from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
 from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
+from homeassistant.components.light import INTENT_SET
 
 from .const import (
     DOMAIN,
@@ -49,7 +51,7 @@ from .const import (
 )
 
 from .conversation import RhasspyConversationAgent
-from .core import command_to_sentences
+from .core import command_to_sentences, EntityCommandInfo
 from .default_commands import DEFAULT_INTENT_COMMANDS
 from .intent_handlers import (
     DeviceStateIntent,
@@ -107,7 +109,22 @@ CONF_NO_DEFAULT_COMMANDS = "no_default_commands"
 # Default settings
 DEFAULT_API_URL = "http://localhost:12101/api"
 DEFAULT_LANGUAGE = "en-US"
-DEFAULT_SLOTS = {}
+DEFAULT_SLOTS = {
+    "light_color": [
+        "black",
+        "blue",
+        "brown",
+        "gray",
+        "green",
+        "pink",
+        "purple",
+        "violet",
+        "red",
+        "yellow",
+        "orange",
+        "white",
+    ]
+}
 DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
 DEFAULT_TRAIN_TIMEOUT = 1.0
@@ -204,7 +221,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(
                     CONF_REGISTER_CONVERSATION, default=DEFAULT_REGISTER_CONVERSATION
                 ): bool,
-                vol.Optional(CONF_SLOTS, DEFAULT_SLOTS): vol.Schema(
+                vol.Optional(CONF_SLOTS): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str])}
                 ),
                 vol.Optional(CONF_CUSTOM_WORDS, DEFAULT_CUSTOM_WORDS): vol.Schema(
@@ -307,11 +324,8 @@ class RhasspyProvider:
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
 
-        # entity id -> [entity state, clean name]
-        self.entities: Dict[str, Tuple[State, str]] = {}
-
-        # lower-cased entity names in self.entities
-        self.entity_names_lower: Set[str] = set()
+        # entity_id -> EntityCommandInfo
+        self.entities: Dict[str, EntityCommandInfo] = {}
 
         # Language-specific settings
         self.name_replace = self._get_for_language(
@@ -407,6 +421,31 @@ class RhasspyProvider:
         if INTENT_TRIGGER_AUTOMATION_LATER in handle_intents:
             intent.async_register(self.hass, TriggerAutomationLaterIntent())
 
+        # Generate default slots
+        number_0_100 = []
+        for number in range(0, 101):
+            try:
+                number_str = num2words(number, lang=self.num2words_lang)
+            except NotImplementedError:
+                # Use default language (U.S. English)
+                number_str = num2words(number)
+
+            # Clean up dashes, etc.
+            number_str = self._clean_name(number_str)
+
+            # Add substitutions, so digits will show up downstream instead of
+            # words.
+            words = re.split(r"\s+", number_str)
+            for i, word in enumerate(words):
+                if i == 0:
+                    words[i] = f"{word}:{number}"
+                else:
+                    words[i] = word + ":"
+
+            number_0_100.append(" ".join(words))
+
+        DEFAULT_SLOTS["number_0_100"] = number_0_100
+
         # Register for component loaded event
         self.hass.bus.async_listen(EVENT_COMPONENT_LOADED, self.component_loaded)
 
@@ -425,35 +464,45 @@ class RhasspyProvider:
 
             if state.entity_id in entity_name_map:
                 # User-defined name
-                entity_name = entity_name_map[state.entity_id]
+                speech_name = entity_name_map[state.entity_id]
             else:
                 # Try to clean name
-                entity_name = self._clean_name(state.name)
+                speech_name = self._clean_name(state.name)
 
-            # Ensure we don't duplicate names
-            entity_name_lower = entity_name.lower()
-            if entity_name_lower not in self.entity_names_lower:
-                self.entities[state.entity_id] = (state, entity_name)
-                self.entity_names_lower.add(entity_name_lower)
+            # Clean name but don't replace numbers.
+            # This should be matched by intent.async_match_state.
+            friendly_name = state.name.replace("_", " ")
+
+            info = EntityCommandInfo(
+                entity_id=state.entity_id,
+                state=state,
+                speech_name=speech_name,
+                friendly_name=friendly_name,
+            )
+
+            self.entities[state.entity_id] = info
 
         # Detemine if new entities have been added
         if len(self.entities) > old_entity_count:
             _LOGGER.info("Need to retrain profile")
             self.schedule_retrain()
 
-    def _clean_name(self, name: str) -> str:
+    def _clean_name(self, name: str, replace_numbers=True) -> str:
         # Do number replacement
         words = re.split(r"\s+", name)
-        for i, word in enumerate(words):
-            try:
-                number = float(word)
+
+        if replace_numbers:
+            # Convert numbers to words
+            for i, word in enumerate(words):
                 try:
-                    words[i] = num2words(number, lang=self.num2words_lang)
-                except NotImplementedError:
-                    # Use default language (U.S. English)
-                    words[i] = num2words(number)
-            except ValueError:
-                pass
+                    number = float(word)
+                    try:
+                        words[i] = num2words(number, lang=self.num2words_lang)
+                    except NotImplementedError:
+                        # Use default language (U.S. English)
+                        words[i] = num2words(number)
+                except ValueError:
+                    pass
 
         name = " ".join(words)
 
@@ -530,6 +579,18 @@ class RhasspyProvider:
                             ):
                                 sentences_by_intent[intent_type].append(sentence)
 
+                # Prune empty intents
+                for intent_type in list(sentences_by_intent):
+                    sentences = [
+                        s
+                        for s in sentences_by_intent[intent_type]
+                        if len(s.strip()) > 0
+                    ]
+                    if len(sentences) > 0:
+                        sentences_by_intent[intent_type] = sentences
+                    else:
+                        del sentences_by_intent[intent_type]
+
                 # Check for custom sentences
                 num_sentences = sum(len(s) for s in sentences_by_intent.values())
                 if num_sentences > 0:
@@ -579,7 +640,10 @@ class RhasspyProvider:
                         )
 
                 # Check for slots
-                slots = self.config.get("slots", {})
+                slots = dict(DEFAULT_SLOTS)
+                for slot_name, slot_values in self.config.get(CONF_SLOTS, {}).items():
+                    slots[slot_name] = slot_values
+
                 if len(slots) > 0:
                     _LOGGER.debug(f"Writing slots ({self.slots_url})")
                     for slot_name, slot_values in list(slots.items()):
@@ -646,6 +710,3 @@ class RhasspyProvider:
 
         # Try current language, fall back to default language (U.S. English)
         return default_values.get(self.language, default_values[DEFAULT_LANGUAGE])
-
-
-# -----------------------------------------------------------------------------
