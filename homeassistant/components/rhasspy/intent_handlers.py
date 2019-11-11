@@ -12,6 +12,7 @@ from .const import (
     INTENT_IS_DEVICE_OFF,
     INTENT_IS_COVER_OPEN,
     INTENT_IS_COVER_CLOSED,
+    INTENT_IS_DEVICE_STATE,
     INTENT_DEVICE_STATE,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
@@ -24,6 +25,33 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
+
+
+class IsDeviceStateIntent(intent.IntentHandler):
+    """Confirms or disconfirms the variable state of a device."""
+
+    intent_type = INTENT_IS_DEVICE_STATE
+    slot_schema = {"name": str, "state": str}
+
+    def __init__(self, speech_template: Template):
+        self.speech_template = speech_template
+
+    async def async_handle(self, intent_obj):
+        hass = intent_obj.hass
+        slots = self.async_validate_slots(intent_obj.slots)
+        name = slots["name"]["value"]
+        state_name = slots["state"]["value"]
+        state = intent.async_match_state(hass, name)
+
+        self.speech_template.hass = hass
+        speech = self.speech_template.async_render(
+            {"entity": state, "state": state_name}
+        )
+        _LOGGER.debug(speech)
+
+        response = intent_obj.create_response()
+        response.async_set_speech(speech)
+        return response
 
 
 class DeviceStateIntent(intent.IntentHandler):
@@ -55,6 +83,8 @@ class DeviceStateIntent(intent.IntentHandler):
 
 def make_state_handler(intent_obj, states: List[str], speech_template: Template):
     class StateIntent(intent.IntentHandler):
+        """Confirms or disconfirms the specific state of a device."""
+
         intent_type = intent_obj
         slot_schema = {"name": str}
 

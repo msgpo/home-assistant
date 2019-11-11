@@ -32,6 +32,7 @@ from .const import (
     INTENT_IS_DEVICE_OFF,
     INTENT_IS_COVER_OPEN,
     INTENT_IS_COVER_CLOSED,
+    INTENT_IS_DEVICE_STATE,
     INTENT_DEVICE_STATE,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
@@ -54,6 +55,7 @@ from .conversation import RhasspyConversationAgent
 from .core import command_to_sentences, EntityCommandInfo
 from .default_commands import DEFAULT_INTENT_COMMANDS
 from .intent_handlers import (
+    IsDeviceStateIntent,
     DeviceStateIntent,
     SetTimerIntent,
     TimerReadyIntent,
@@ -103,8 +105,8 @@ CONF_TRAIN_TIMEOUT = "train_timeout"
 # List of possible items that can be added to the shopping list
 CONF_SHOPPING_LIST_ITEMS = "shopping_list_items"
 
-# If True, don't generate any default voice commands
-CONF_NO_DEFAULT_COMMANDS = "no_default_commands"
+# If True, generate default voice commands
+CONF_MAKE_INTENT_COMMANDS = "make_intent_commands"
 
 # Default settings
 DEFAULT_API_URL = "http://localhost:12101/api"
@@ -129,7 +131,7 @@ DEFAULT_CUSTOM_WORDS = {}
 DEFAULT_REGISTER_CONVERSATION = True
 DEFAULT_TRAIN_TIMEOUT = 1.0
 DEFAULT_SHOPPING_LIST_ITEMS = []
-DEFAULT_NO_DEFAULT_COMMANDS = False
+DEFAULT_MAKE_INTENT_COMMANDS = True
 
 DEFAULT_NAME_REPLACE = {
     # English
@@ -147,6 +149,7 @@ DEFAULT_HANDLE_INTENTS = [
     INTENT_IS_DEVICE_OFF,
     INTENT_IS_COVER_OPEN,
     INTENT_IS_COVER_CLOSED,
+    INTENT_IS_DEVICE_STATE,
     INTENT_DEVICE_STATE,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
@@ -167,6 +170,9 @@ DEFAULT_RESPONSE_TEMPLATES = {
         ),
         INTENT_IS_COVER_CLOSED: T(
             "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} closed."
+        ),
+        INTENT_IS_DEVICE_STATE: T(
+            "{{ 'Yes' if entity.state == state else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} {{ state.replace('_', ' ') }}."
         ),
         INTENT_DEVICE_STATE: T(
             "{{ entity.name }} {% 'are' if entity.name.endswith('s') else 'is' %} {{ entity.state }}."
@@ -244,8 +250,20 @@ CONFIG_SCHEMA = vol.Schema(
                     CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
                 ): vol.All(cv.ensure_list, [str]),
                 vol.Optional(
-                    CONF_NO_DEFAULT_COMMANDS, default=DEFAULT_NO_DEFAULT_COMMANDS
-                ): bool,
+                    CONF_MAKE_INTENT_COMMANDS, default=DEFAULT_MAKE_INTENT_COMMANDS
+                ): vol.Any(
+                    bool,
+                    vol.Schema(
+                        {
+                            vol.Exclusive(
+                                KEY_INCLUDE, CONF_MAKE_INTENT_COMMANDS
+                            ): vol.All(cv.ensure_list, [str]),
+                            vol.Exclusive(
+                                KEY_EXCLUDE, CONF_MAKE_INTENT_COMMANDS
+                            ): vol.All(cv.ensure_list, [str]),
+                        }
+                    ),
+                ),
             }
         )
     },
@@ -327,10 +345,15 @@ class RhasspyProvider:
         # entity_id -> EntityCommandInfo
         self.entities: Dict[str, EntityCommandInfo] = {}
 
-        # Language-specific settings
-        self.name_replace = self._get_for_language(
-            CONF_NAME_REPLACE, DEFAULT_NAME_REPLACE
+        # Language-specific name replacements
+        self.name_replace = dict(
+            DEFAULT_NAME_REPLACE.get(
+                self.language, DEFAULT_NAME_REPLACE[DEFAULT_LANGUAGE]
+            )
         )
+        for key, value in self.config.get(CONF_NAME_REPLACE, {}).items():
+            # Overwrite with user settings
+            self.name_replace[key] = value
 
         # Regex replacements for cleaning names
         self.name_regexes = self.name_replace.get(KEY_REGEX, {})
@@ -363,9 +386,9 @@ class RhasspyProvider:
             )
         )
         if CONF_RESPONSE_TEMPLATES in self.config:
-            for intent_obj, template in self.config[CONF_RESPONSE_TEMPLATES].items():
+            for intent_name, template in self.config[CONF_RESPONSE_TEMPLATES].items():
                 # Overwrite default
-                response_templates[intent_obj] = template
+                response_templates[intent_name] = template
 
         # Get states of intents
         intent_states = dict(
@@ -374,13 +397,19 @@ class RhasspyProvider:
             )
         )
         if CONF_INTENT_STATES in self.config:
-            for intent_obj, states in self.config[CONF_INTENT_STATES].items():
-                intent_states[intent_obj] = states
+            for intent_name, states in self.config[CONF_INTENT_STATES].items():
+                intent_states[intent_name] = states
 
         # Register intent handlers
         handle_intents = set(
             self.config.get(CONF_HANDLE_INTENTS, DEFAULT_HANDLE_INTENTS)
         )
+
+        if INTENT_IS_DEVICE_STATE in handle_intents:
+            intent.async_register(
+                self.hass,
+                IsDeviceStateIntent(response_templates[INTENT_IS_DEVICE_STATE]),
+            )
 
         if INTENT_DEVICE_STATE in handle_intents:
             intent.async_register(
@@ -421,7 +450,8 @@ class RhasspyProvider:
         if INTENT_TRIGGER_AUTOMATION_LATER in handle_intents:
             intent.async_register(self.hass, TriggerAutomationLaterIntent())
 
-        # Generate default slots
+        # Generate default slots.
+        # Numbers zero to one hundred.
         number_0_100 = []
         for number in range(0, 101):
             try:
@@ -542,19 +572,33 @@ class RhasspyProvider:
 
             try:
                 sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
+                make_default_commands = self.config.get(
+                    CONF_MAKE_INTENT_COMMANDS, DEFAULT_MAKE_INTENT_COMMANDS
+                )
 
-                if self.config.get(
-                    CONF_NO_DEFAULT_COMMANDS, DEFAULT_NO_DEFAULT_COMMANDS
-                ):
-                    # No default commands
-                    intent_commands = {}
-                else:
+                if make_default_commands:
                     # Use default commands
                     intent_commands = dict(
                         DEFAULT_INTENT_COMMANDS.get(
                             self.language, DEFAULT_INTENT_COMMANDS[DEFAULT_LANGUAGE]
                         )
                     )
+
+                    # Determine if intents should be included or excluded
+                    if isinstance(make_default_commands, dict):
+                        if KEY_INCLUDE in make_default_commands:
+                            include_intents = set(make_default_commands[KEY_INCLUDE])
+                            intent_commands = {
+                                intent_name: commands
+                                for intent_name, commands in intent_commands.items()
+                                if intent_name in include_intents
+                            }
+                        elif KEY_EXCLUDE in make_default_commands:
+                            for intent_name in make_default_commands[KEY_EXCLUDE]:
+                                del intent_commands[intent_name]
+                else:
+                    # No default commands
+                    intent_commands = {}
 
                 # Override defaults with user commands
                 for intent_type, commands in self.config.get(
@@ -675,6 +719,7 @@ class RhasspyProvider:
             self.train_timer_event.clear()
 
     def _get_shopping_list_commands(self, commands):
+        """Generate voice commands for possible shopping list items."""
         possible_items = self.config.get(
             CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
         )
@@ -699,14 +744,3 @@ class RhasspyProvider:
                     yield template.async_render(
                         {"item_name": item_name, "clean_item_name": clean_item_name}
                     )
-
-    # -------------------------------------------------------------------------
-
-    def _get_for_language(self, config_key, default_values):
-        """Gets language-specific values for a configuration option."""
-        if config_key in self.config:
-            # User-specified value
-            return self.cofig[config_key]
-
-        # Try current language, fall back to default language (U.S. English)
-        return default_values.get(self.language, default_values[DEFAULT_LANGUAGE])
