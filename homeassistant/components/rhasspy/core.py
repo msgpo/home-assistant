@@ -1,28 +1,30 @@
-#!/usr/bin/env python3
-import io
-import subprocess
-import wave
+"""
+Shared functions and classes for Rhasspy integration.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
 import logging
-from typing import Iterable, Set, Dict
+from typing import Dict, Iterable, Set
 
 import attr
 import pydash
 
+from homeassistant.components.stt import SpeechMetadata
 from homeassistant.core import State
 from homeassistant.helpers.template import Template
-from homeassistant.components.stt import SpeechMetadata
 
 from .const import (
     KEY_COMMAND,
-    KEY_COMMANDS,
     KEY_COMMAND_TEMPLATE,
     KEY_COMMAND_TEMPLATES,
+    KEY_COMMANDS,
     KEY_DATA,
     KEY_DATA_TEMPLATE,
-    KEY_INCLUDE,
-    KEY_EXCLUDE,
     KEY_DOMAINS,
     KEY_ENTITIES,
+    KEY_EXCLUDE,
+    KEY_INCLUDE,
 )
 
 # -----------------------------------------------------------------------------
@@ -36,64 +38,6 @@ class EntityCommandInfo:
     friendly_name: str = attr.ib()
     speech_name: str = attr.ib()
     state: State = attr.ib()
-
-
-# -----------------------------------------------------------------------------
-# Audio Functions
-# -----------------------------------------------------------------------------
-
-
-def maybe_convert_audio(metadata: SpeechMetadata, audio_data: bytes) -> bytes:
-    """Converts audio data to 16-bit, 16Khz mono."""
-    rate = int(metadata.sample_rate)
-    width = int(metadata.bit_rate)
-
-    # TODO: Check channels
-    if (rate == 16000) and (width == 16):
-        # No converstion necessary
-        return audio_data
-
-    convert_cmd = [
-        "sox",
-        "-t",
-        "raw",
-        "-r",
-        str(rate),
-        "-b",
-        str(width),
-        "-c",
-        str(channels),
-        "-",
-        "-r",
-        "16000",
-        "-e",
-        "signed-integer",
-        "-b",
-        "16",
-        "-c",
-        "1",
-        "-t",
-        "raw",
-        "-",
-    ]
-
-    _LOGGER.debug(convert_cmd)
-
-    return subprocess.run(
-        convert_cmd, check=True, stdout=subprocess.PIPE, input=audio_data
-    ).stdout
-
-
-def buffer_to_wav(buffer: bytes) -> bytes:
-    """Wraps a buffer of raw audio data (16-bit, 16Khz mono) in a WAV"""
-    with io.BytesIO() as wav_buffer:
-        with wave.open(wav_buffer, mode="wb") as wav_file:
-            wav_file.setframerate(16000)
-            wav_file.setsampwidth(2)
-            wav_file.setnchannels(1)
-            wav_file.writeframesraw(buffer)
-
-        return wav_buffer.getvalue()
 
 
 # -----------------------------------------------------------------------------

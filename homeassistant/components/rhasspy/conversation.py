@@ -1,10 +1,16 @@
-"""Rhasspy conversation integration."""
+"""
+Rhasspy agent for conversation integration.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
+from abc import ABC, abstractmethod
 import logging
 from urllib.parse import urljoin
-from abc import ABC, abstractmethod
 
 import aiohttp
 import pydash
+
 from homeassistant import core
 from homeassistant.helpers import intent
 

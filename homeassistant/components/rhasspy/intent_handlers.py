@@ -1,23 +1,30 @@
-import logging
+"""
+Handlers for Rhasspy-specific intents.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
 import asyncio
+import logging
 from typing import List
 
 import pydash
+
 from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template
 
 from .const import (
     DOMAIN,
-    INTENT_IS_DEVICE_ON,
-    INTENT_IS_DEVICE_OFF,
-    INTENT_IS_COVER_OPEN,
-    INTENT_IS_COVER_CLOSED,
-    INTENT_IS_DEVICE_STATE,
     INTENT_DEVICE_STATE,
-    INTENT_TRIGGER_AUTOMATION,
-    INTENT_TRIGGER_AUTOMATION_LATER,
+    INTENT_IS_COVER_CLOSED,
+    INTENT_IS_COVER_OPEN,
+    INTENT_IS_DEVICE_OFF,
+    INTENT_IS_DEVICE_ON,
+    INTENT_IS_DEVICE_STATE,
     INTENT_SET_TIMER,
     INTENT_TIMER_READY,
+    INTENT_TRIGGER_AUTOMATION,
+    INTENT_TRIGGER_AUTOMATION_LATER,
 )
 
 # -----------------------------------------------------------------------------
@@ -28,7 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class IsDeviceStateIntent(intent.IntentHandler):
-    """Confirms or disconfirms the variable state of a device."""
+    """Confirms or disconfirms the current state of a device."""
 
     intent_type = INTENT_IS_DEVICE_STATE
     slot_schema = {"name": str, "state": str}
@@ -43,6 +50,7 @@ class IsDeviceStateIntent(intent.IntentHandler):
         state_name = slots["state"]["value"]
         state = intent.async_match_state(hass, name)
 
+        # Generate speech from a template.
         self.speech_template.hass = hass
         speech = self.speech_template.async_render(
             {"entity": state, "state": state_name}
@@ -69,6 +77,7 @@ class DeviceStateIntent(intent.IntentHandler):
         name = slots["name"]["value"]
         state = intent.async_match_state(hass, name)
 
+        # Generate speech from a template.
         self.speech_template.hass = hass
         speech = self.speech_template.async_render({"entity": state})
         _LOGGER.debug(speech)
@@ -82,9 +91,9 @@ class DeviceStateIntent(intent.IntentHandler):
 
 
 def make_state_handler(intent_obj, states: List[str], speech_template: Template):
+    """Generates an intent handler that checks if a device is in a set of states."""
     class StateIntent(intent.IntentHandler):
         """Confirms or disconfirms the specific state of a device."""
-
         intent_type = intent_obj
         slot_schema = {"name": str}
 
@@ -98,6 +107,7 @@ def make_state_handler(intent_obj, states: List[str], speech_template: Template)
             name = slots["name"]["value"]
             state = intent.async_match_state(hass, name)
 
+            # Generate speech from a template.
             self.speech_template.hass = hass
             speech = self.speech_template.async_render(
                 {"entity": state, "states": self.states}
@@ -116,7 +126,6 @@ def make_state_handler(intent_obj, states: List[str], speech_template: Template)
 
 class SetTimerIntent(intent.IntentHandler):
     """Waits for a specified amount of time and then generates an INTENT_TIMER_READY."""
-
     intent_type = INTENT_SET_TIMER
     slot_schema = {"hours": str, "minutes": str, "seconds": str}
 
@@ -125,7 +134,8 @@ class SetTimerIntent(intent.IntentHandler):
         slots = self.async_validate_slots(intent_obj.slots)
         total_seconds = SetTimerIntent.get_seconds(slots)
 
-        _LOGGER.info(f"Waiting for {total_seconds} second(s)")
+        # Wait for timer to elapse
+        _LOGGER.debug(f"Waiting for {total_seconds} second(s)")
         await asyncio.sleep(total_seconds)
 
         return await intent.async_handle(hass, DOMAIN, INTENT_TIMER_READY, {}, "")
@@ -149,7 +159,6 @@ class SetTimerIntent(intent.IntentHandler):
 
 class TimerReadyIntent(intent.IntentHandler):
     """Generated after INTENT_SET_TIMER timeout elapses."""
-
     intent_type = INTENT_TIMER_READY
 
     def __init__(self, speech_template: Template):
@@ -157,8 +166,9 @@ class TimerReadyIntent(intent.IntentHandler):
 
     async def async_handle(self, intent_obj):
         hass = intent_obj.hass
-        self.speech_template.hass = hass
 
+        # Generate speech from a template
+        self.speech_template.hass = hass
         speech = self.speech_template.async_render()
         _LOGGER.debug(speech)
 
@@ -172,7 +182,6 @@ class TimerReadyIntent(intent.IntentHandler):
 
 class TriggerAutomationIntent(intent.IntentHandler):
     """Triggers an automation by name and generates speech according to a template."""
-
     intent_type = INTENT_TRIGGER_AUTOMATION
     slot_schema = {"name": str}
 
@@ -189,6 +198,7 @@ class TriggerAutomationIntent(intent.IntentHandler):
             "automation", "trigger", {"entity_id": state.entity_id}
         )
 
+        # Generate speech from a template
         self.speech_template.hass = hass
         speech = self.speech_template.async_render({"automation": state})
         _LOGGER.debug(speech)
@@ -200,7 +210,6 @@ class TriggerAutomationIntent(intent.IntentHandler):
 
 class TriggerAutomationLaterIntent(intent.IntentHandler):
     """Waits for a specified amount of time and then triggers an automation using INTENT_TRIGGER_AUTOMATION."""
-
     intent_type = INTENT_TRIGGER_AUTOMATION_LATER
     slot_schema = {"name": str, "hours": str, "minutes": str, "seconds": str}
 

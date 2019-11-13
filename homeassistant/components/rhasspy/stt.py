@@ -1,29 +1,34 @@
-"""Support for Rhasspy speech to text."""
-import io
-import os
-import time
+"""
+Support for Rhasspy speech to text.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
 import asyncio
+import io
 import logging
-import shutil
-import wave
-from urllib.parse import urljoin
-from typing import List
+import os
 from pathlib import Path
+import shutil
+import time
+from typing import List
+from urllib.parse import urljoin
+import wave
 
 import aiohttp
-import voluptuous as vol
 import requests
-import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
 from homeassistant.components.stt import Provider, SpeechMetadata, SpeechResult
 from homeassistant.components.stt.const import (
-    AudioFormats,
-    AudioCodecs,
     AudioBitRates,
-    AudioSampleRates,
     AudioChannels,
+    AudioCodecs,
+    AudioFormats,
+    AudioSampleRates,
     SpeechResultState,
 )
+import homeassistant.helpers.config_validation as cv
 
 from .const import SUPPORT_LANGUAGES
 
@@ -38,9 +43,7 @@ CONF_SPEECH_URL = "speech_url"
 DEFAULT_SPEECH_URL = "http://localhost:12101/api/speech-to-text"
 
 # Config
-PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
-    {vol.Optional(CONF_SPEECH_URL): cv.url}
-)
+PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend({vol.Optional(CONF_SPEECH_URL): cv.url})
 
 # -----------------------------------------------------------------------------
 
@@ -48,7 +51,7 @@ PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
 async def async_get_engine(hass, config, discovery_info):
     """Set up Rhasspy speech to text component."""
     provider = RhasspySTTProvider(hass, config)
-    _LOGGER.info("Loaded Rhasspy stt provider")
+    _LOGGER.debug("Loaded Rhasspy stt provider")
     return provider
 
 
@@ -86,12 +89,13 @@ class RhasspySTTProvider(Provider):
         text_result = ""
 
         try:
-            # First chunk is a WAV header
+            # First chunk is a WAV header (no frames)
             header_chunk = True
             with io.BytesIO() as wav_io:
                 wav_file = wave.open(wav_io, "wb")
                 async for audio_chunk, _ in stream.iter_chunks():
                     if header_chunk:
+                        # Extract WAV information
                         header_chunk = False
                         with io.BytesIO(audio_chunk) as header_io:
                             with wave.open(header_io) as header_file:
@@ -99,14 +103,15 @@ class RhasspySTTProvider(Provider):
                                 wav_file.setsampwidth(header_file.getsampwidth())
                                 wav_file.setframerate(header_file.getframerate())
                     else:
-                        # Everything after first chunk is audio data
+                        # Everything after first chunk is audio data.
+                        # Add to in-memory WAV file.
                         wav_file.writeframes(audio_chunk)
 
                 wav_file.close()
                 wav_data = wav_io.getvalue()
-                _LOGGER.info(f"Received {len(wav_data)} byte(s)")
+                _LOGGER.debug(f"Received {len(wav_data)} byte(s)")
 
-            # POST to Rhasspy
+            # POST to Rhasspy endpoint
             headers = {"Content-Type": "audio/wav"}
             text_result = requests.post(
                 self.speech_url, data=wav_data, headers=headers

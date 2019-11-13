@@ -1,7 +1,12 @@
-"""Const for Rhasspy integration."""
+"""Constants for Rhasspy integration.
 
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
 DOMAIN = "rhasspy"
 
+# Language-specific profiles available for Rhasspy.
+# See https://github.com/synesthesiam/rhasspy-profiles/releases
 SUPPORT_LANGUAGES = [
     "en-US",
     "nl-NL",
@@ -16,7 +21,7 @@ SUPPORT_LANGUAGES = [
     "vi-VI",
 ]
 
-# Custom intents
+# Custom intents for Rhasspy integration
 INTENT_IS_DEVICE_ON = "IsDeviceOn"
 INTENT_IS_DEVICE_OFF = "IsDeviceOff"
 

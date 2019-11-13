@@ -1,69 +1,72 @@
-"""Support for Rhasspy integration."""
-import io
-import re
-import logging
-import threading
-import time
+"""
+Support for Rhasspy voice assistant integration.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
 import asyncio
 from collections import defaultdict
-from urllib.parse import urljoin
+import io
+import logging
+import re
+import threading
+import time
 from typing import Dict, Tuple
+from urllib.parse import urljoin
 
+from num2words import num2words
 import pydash
 import requests
 import voluptuous as vol
-from num2words import num2words
 
-import homeassistant.helpers.config_validation as cv
-import homeassistant.util.color as color_util
-from homeassistant.core import Event, callback, State
-from homeassistant.const import EVENT_COMPONENT_LOADED, ATTR_FRIENDLY_NAME
-from homeassistant.helpers import intent
-from homeassistant.helpers.template import Template as T
 from homeassistant.components.conversation import async_set_agent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
-from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
 from homeassistant.components.light import INTENT_SET
+from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
+from homeassistant.const import ATTR_FRIENDLY_NAME, EVENT_COMPONENT_LOADED
+from homeassistant.core import Event, State, callback
+from homeassistant.helpers import intent
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.template import Template as T
+import homeassistant.util.color as color_util
 
 from .const import (
     DOMAIN,
-    SUPPORT_LANGUAGES,
-    INTENT_IS_DEVICE_ON,
-    INTENT_IS_DEVICE_OFF,
-    INTENT_IS_COVER_OPEN,
-    INTENT_IS_COVER_CLOSED,
-    INTENT_IS_DEVICE_STATE,
     INTENT_DEVICE_STATE,
-    INTENT_TRIGGER_AUTOMATION,
-    INTENT_TRIGGER_AUTOMATION_LATER,
+    INTENT_IS_COVER_CLOSED,
+    INTENT_IS_COVER_OPEN,
+    INTENT_IS_DEVICE_OFF,
+    INTENT_IS_DEVICE_ON,
+    INTENT_IS_DEVICE_STATE,
     INTENT_SET_TIMER,
     INTENT_TIMER_READY,
+    INTENT_TRIGGER_AUTOMATION,
+    INTENT_TRIGGER_AUTOMATION_LATER,
     KEY_COMMAND,
-    KEY_COMMANDS,
     KEY_COMMAND_TEMPLATE,
     KEY_COMMAND_TEMPLATES,
+    KEY_COMMANDS,
     KEY_DATA,
     KEY_DATA_TEMPLATE,
-    KEY_INCLUDE,
-    KEY_EXCLUDE,
     KEY_DOMAINS,
     KEY_ENTITIES,
+    KEY_EXCLUDE,
+    KEY_INCLUDE,
     KEY_REGEX,
+    SUPPORT_LANGUAGES,
 )
-
 from .conversation import RhasspyConversationAgent
-from .core import command_to_sentences, EntityCommandInfo
+from .core import EntityCommandInfo, command_to_sentences
 from .default_commands import DEFAULT_INTENT_COMMANDS
 from .intent_handlers import (
-    IsDeviceStateIntent,
     DeviceStateIntent,
+    IsDeviceStateIntent,
     SetTimerIntent,
     TimerReadyIntent,
     TriggerAutomationIntent,
     TriggerAutomationLaterIntent,
     make_state_handler,
 )
-
 
 # -----------------------------------------------------------------------------
 
@@ -296,7 +299,7 @@ async def async_setup(hass, config):
         agent = RhasspyConversationAgent(hass, api_url)
         async_set_agent(hass, agent)
 
-        _LOGGER.info("Registered Rhasspy conversation agent")
+        _LOGGER.debug("Registered Rhasspy conversation agent")
 
     provider = RhasspyProvider(hass, conf)
     await provider.async_initialize()
@@ -306,7 +309,7 @@ async def async_setup(hass, config):
     # Register services
     async def async_train_handle(service):
         """Service handle for train."""
-        _LOGGER.info("Re-training profile")
+        _LOGGER.debug("Re-training profile")
         provider.schedule_retrain()
 
     hass.services.async_register(
@@ -514,7 +517,7 @@ class RhasspyProvider:
 
         # Detemine if new entities have been added
         if len(self.entities) > old_entity_count:
-            _LOGGER.info("Need to retrain profile")
+            _LOGGER.debug("Need to retrain profile")
             self.schedule_retrain()
 
     def _clean_name(self, name: str, replace_numbers=True) -> str:
@@ -699,10 +702,10 @@ class RhasspyProvider:
                     requests.post(self.slots_url, json=slots)
 
                 # Train profile
-                _LOGGER.info(f"Training profile ({self.train_url})")
+                _LOGGER.debug(f"Training profile ({self.train_url})")
                 requests.post(self.train_url)
 
-                _LOGGER.info("Ready")
+                _LOGGER.debug("Ready")
             except Exception as e:
                 _LOGGER.exception("train")
 

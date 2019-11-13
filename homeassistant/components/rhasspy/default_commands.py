@@ -1,28 +1,36 @@
+"""
+Templates for auto-generated Rhasspy voice commands.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
+from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
+from homeassistant.components.light import INTENT_SET
+from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
 from homeassistant.helpers import intent
 from homeassistant.helpers.template import Template as T
-from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
-from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
-from homeassistant.components.light import INTENT_SET
 
 from .const import (
-    INTENT_IS_DEVICE_ON,
-    INTENT_IS_DEVICE_OFF,
-    INTENT_IS_COVER_OPEN,
-    INTENT_IS_COVER_CLOSED,
     INTENT_DEVICE_STATE,
+    INTENT_IS_COVER_CLOSED,
+    INTENT_IS_COVER_OPEN,
+    INTENT_IS_DEVICE_OFF,
+    INTENT_IS_DEVICE_ON,
+    INTENT_SET_TIMER,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
-    INTENT_SET_TIMER,
-    KEY_COMMANDS,
     KEY_COMMAND_TEMPLATES,
+    KEY_COMMANDS,
     KEY_DATA,
     KEY_DATA_TEMPLATE,
-    KEY_INCLUDE,
-    KEY_EXCLUDE,
     KEY_DOMAINS,
     KEY_ENTITIES,
+    KEY_EXCLUDE,
+    KEY_INCLUDE,
 )
 
+# Default command templates by intent.
+# Includes built-in Home Assistant intents as well as Rhasspy intents.
 DEFAULT_INTENT_COMMANDS = {
     "en-US": {
         intent.INTENT_TURN_ON: [
@@ -32,8 +40,12 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("turn on [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
-                    T("turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"),
+                    T(
+                        "turn on [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
+                    ),
+                    T(
+                        "turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"
+                    ),
                 ],
             }
         ],
@@ -60,8 +72,12 @@ DEFAULT_INTENT_COMMANDS = {
                     KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
                 },
                 KEY_COMMAND_TEMPLATES: [
-                    T("toggle [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
-                    T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} toggle"),
+                    T(
+                        "toggle [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
+                    ),
+                    T(
+                        "[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} toggle"
+                    ),
                 ],
             }
         ],
