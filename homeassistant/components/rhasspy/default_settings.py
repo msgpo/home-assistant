@@ -114,6 +114,8 @@ DEFAULT_INTENT_STATES = {
     }
 }
 
+ON_OFF_DOMAINS = ["light", "switch", "camera", "fan", "media_player"]
+
 # Default command templates by intent.
 # Includes built-in Home Assistant intents as well as Rhasspy intents.
 DEFAULT_INTENT_COMMANDS = {
@@ -121,8 +123,8 @@ DEFAULT_INTENT_COMMANDS = {
         intent.INTENT_TURN_ON: [
             {
                 KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light", "switch"],
-                    KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
+                    KEY_DOMAINS: ON_OFF_DOMAINS,
+                    KEY_ENTITIES: ["group.all_lights"],
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
@@ -137,8 +139,8 @@ DEFAULT_INTENT_COMMANDS = {
         intent.INTENT_TURN_OFF: [
             {
                 KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light", "switch"],
-                    KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
+                    KEY_DOMAINS: ON_OFF_DOMAINS,
+                    KEY_ENTITIES: ["group.all_lights"],
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
@@ -153,8 +155,8 @@ DEFAULT_INTENT_COMMANDS = {
         intent.INTENT_TOGGLE: [
             {
                 KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light", "switch"],
-                    KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
+                    KEY_DOMAINS: ON_OFF_DOMAINS,
+                    KEY_ENTITIES: ["group.all_lights"],
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
@@ -241,7 +243,6 @@ DEFAULT_INTENT_COMMANDS = {
                     ],
                     KEY_ENTITIES: [
                         "group.all_lights",
-                        "group.all_switches",
                         "group.all_covers",
                     ],
                 },
@@ -258,8 +259,8 @@ DEFAULT_INTENT_COMMANDS = {
         INTENT_IS_DEVICE_ON: [
             {
                 KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light", "switch"],
-                    KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
+                    KEY_DOMAINS: ON_OFF_DOMAINS,
+                    KEY_ENTITIES: ["group.all_lights"],
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
@@ -271,8 +272,8 @@ DEFAULT_INTENT_COMMANDS = {
         INTENT_IS_DEVICE_OFF: [
             {
                 KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light", "switch"],
-                    KEY_ENTITIES: ["group.all_lights", "group.all_switches"],
+                    KEY_DOMAINS: ON_OFF_DOMAINS,
+                    KEY_ENTITIES: ["group.all_lights"],
                 },
                 KEY_COMMAND_TEMPLATES: [
                     T(
