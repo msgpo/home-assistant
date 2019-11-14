@@ -307,6 +307,12 @@ DEFAULT_INTENT_COMMANDS = {
                 ],
             }
         ],
+        INTENT_IS_DEVICE_STATE: [
+            {
+                KEY_COMMANDS: ["is it sunset", "has the sun set [yet]"],
+                KEY_DATA: {"name": "sun", "state": "below_horizon"},
+            }
+        ],
         INTENT_TRIGGER_AUTOMATION: [
             {
                 KEY_INCLUDE: {KEY_DOMAINS: ["automation"]},

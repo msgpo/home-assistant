@@ -99,10 +99,11 @@ def train_rhasspy(provider):
 
         # Generate custom sentences.ini
         with io.StringIO() as sentences_file:
-            for intent_type, sentences in sentences_by_intent.items():
+            for intent_type in sorted(sentences_by_intent):
                 print(f"[{intent_type}]", file=sentences_file)
 
-                for sentence in sentences:
+                # Write in sorted order so Rhasspy can avoid re-training.
+                for sentence in sorted(sentences_by_intent[intent_type]):
                     if sentence.startswith("["):
                         # Escape "[" at start
                         sentence = f"\\{sentence}"
@@ -122,13 +123,15 @@ def train_rhasspy(provider):
         _LOGGER.debug(f"Writing custom words ({provider.custom_words_url})")
 
         with io.StringIO() as custom_words_file:
-            for word, pronunciations in custom_words.items():
+            for word in sorted(custom_words):
+                pronunciations = custom_words[word]
+
                 # Accept either string or list of strings
                 if isinstance(pronunciations, str):
                     pronunciations = [pronunciations]
 
                 # word P1 P2 P3...
-                for pronunciation in pronunciations:
+                for pronunciation in sorted(pronunciations):
                     print(word.strip(), pronunciation.strip(), file=custom_words_file)
 
             # POST custom_words.txt
