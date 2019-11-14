@@ -12,11 +12,13 @@ from homeassistant.helpers.template import Template as T
 
 from .const import (
     INTENT_DEVICE_STATE,
+    INTENT_IS_DEVICE_STATE,
     INTENT_IS_COVER_CLOSED,
     INTENT_IS_COVER_OPEN,
     INTENT_IS_DEVICE_OFF,
     INTENT_IS_DEVICE_ON,
     INTENT_SET_TIMER,
+    INTENT_TIMER_READY,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
     KEY_COMMAND_TEMPLATES,
@@ -27,7 +29,90 @@ from .const import (
     KEY_ENTITIES,
     KEY_EXCLUDE,
     KEY_INCLUDE,
+    KEY_REGEX,
 )
+
+DEFAULT_API_URL = "http://localhost:12101/api"
+DEFAULT_LANGUAGE = "en-US"
+DEFAULT_SLOTS = {
+    "light_color": [
+        "black",
+        "blue",
+        "brown",
+        "gray",
+        "green",
+        "pink",
+        "purple",
+        "violet",
+        "red",
+        "yellow",
+        "orange",
+        "white",
+    ]
+}
+DEFAULT_CUSTOM_WORDS = {}
+DEFAULT_REGISTER_CONVERSATION = True
+DEFAULT_TRAIN_TIMEOUT = 1.0
+DEFAULT_SHOPPING_LIST_ITEMS = []
+DEFAULT_MAKE_INTENT_COMMANDS = True
+
+DEFAULT_NAME_REPLACE = {
+    # English
+    # Replace dashes/underscores with spaces
+    "en-US": {KEY_REGEX: [{r"[_-]": " "}]},
+    #
+    # French
+    # Split dashed words (est-ce -> est -ce)
+    # Replace dashes with spaces
+    "fr-FR": {KEY_REGEX: [{r"-": " -"}, {r"_": " "}]},
+}
+
+DEFAULT_HANDLE_INTENTS = [
+    INTENT_IS_DEVICE_ON,
+    INTENT_IS_DEVICE_OFF,
+    INTENT_IS_COVER_OPEN,
+    INTENT_IS_COVER_CLOSED,
+    INTENT_IS_DEVICE_STATE,
+    INTENT_DEVICE_STATE,
+    INTENT_TRIGGER_AUTOMATION,
+    INTENT_TRIGGER_AUTOMATION_LATER,
+    INTENT_SET_TIMER,
+    INTENT_TIMER_READY,
+]
+
+DEFAULT_RESPONSE_TEMPLATES = {
+    "en-US": {
+        INTENT_IS_DEVICE_ON: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} on."
+        ),
+        INTENT_IS_DEVICE_OFF: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} off."
+        ),
+        INTENT_IS_COVER_OPEN: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} open."
+        ),
+        INTENT_IS_COVER_CLOSED: T(
+            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} closed."
+        ),
+        INTENT_IS_DEVICE_STATE: T(
+            "{{ 'Yes' if entity.state == state else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} {{ state.replace('_', ' ') }}."
+        ),
+        INTENT_DEVICE_STATE: T(
+            "{{ entity.name }} {% 'are' if entity.name.endswith('s') else 'is' %} {{ entity.state }}."
+        ),
+        INTENT_TIMER_READY: T("Timer is ready."),
+        INTENT_TRIGGER_AUTOMATION: T("Triggered {{ automation.name }}."),
+    }
+}
+
+DEFAULT_INTENT_STATES = {
+    "en-US": {
+        INTENT_IS_DEVICE_ON: ["on"],
+        INTENT_IS_DEVICE_OFF: ["off"],
+        INTENT_IS_COVER_OPEN: ["open"],
+        INTENT_IS_COVER_CLOSED: ["closed"],
+    }
+}
 
 # Default command templates by intent.
 # Includes built-in Home Assistant intents as well as Rhasspy intents.

@@ -16,21 +16,29 @@ from urllib.parse import urljoin
 
 from num2words import num2words
 import pydash
-import requests
 import voluptuous as vol
 
 from homeassistant.components.conversation import async_set_agent
-from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
-from homeassistant.components.light import INTENT_SET
-from homeassistant.components.shopping_list import INTENT_ADD_ITEM, INTENT_LAST_ITEMS
 from homeassistant.const import ATTR_FRIENDLY_NAME, EVENT_COMPONENT_LOADED
 from homeassistant.core import Event, State, callback
 from homeassistant.helpers import intent
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.template import Template as T
 import homeassistant.util.color as color_util
 
 from .const import (
+    CONF_API_URL,
+    CONF_LANGUAGE,
+    CONF_INTENT_COMMANDS,
+    CONF_SLOTS,
+    CONF_CUSTOM_WORDS,
+    CONF_NAME_REPLACE,
+    CONF_REGISTER_CONVERSATION,
+    CONF_HANDLE_INTENTS,
+    CONF_RESPONSE_TEMPLATES,
+    CONF_INTENT_STATES,
+    CONF_TRAIN_TIMEOUT,
+    CONF_SHOPPING_LIST_ITEMS,
+    CONF_MAKE_INTENT_COMMANDS,
     DOMAIN,
     INTENT_DEVICE_STATE,
     INTENT_IS_COVER_CLOSED,
@@ -53,11 +61,26 @@ from .const import (
     KEY_EXCLUDE,
     KEY_INCLUDE,
     KEY_REGEX,
+    SERVICE_TRAIN,
     SUPPORT_LANGUAGES,
 )
 from .conversation import RhasspyConversationAgent
 from .core import EntityCommandInfo, command_to_sentences
-from .default_commands import DEFAULT_INTENT_COMMANDS
+from .default_settings import (
+    DEFAULT_API_URL,
+    DEFAULT_LANGUAGE,
+    DEFAULT_SLOTS,
+    DEFAULT_INTENT_COMMANDS,
+    DEFAULT_CUSTOM_WORDS,
+    DEFAULT_REGISTER_CONVERSATION,
+    DEFAULT_TRAIN_TIMEOUT,
+    DEFAULT_SHOPPING_LIST_ITEMS,
+    DEFAULT_MAKE_INTENT_COMMANDS,
+    DEFAULT_NAME_REPLACE,
+    DEFAULT_HANDLE_INTENTS,
+    DEFAULT_RESPONSE_TEMPLATES,
+    DEFAULT_INTENT_STATES,
+)
 from .intent_handlers import (
     DeviceStateIntent,
     IsDeviceStateIntent,
@@ -67,132 +90,11 @@ from .intent_handlers import (
     TriggerAutomationLaterIntent,
     make_state_handler,
 )
+from .training import train_rhasspy
 
 # -----------------------------------------------------------------------------
 
 _LOGGER = logging.getLogger(__name__)
-
-# Base URL of Rhasspy web API
-CONF_API_URL = "api_url"
-
-# Language to use for generating default utterances
-CONF_LANGUAGE = "language"
-
-# User defined commands by intent
-CONF_INTENT_COMMANDS = "intent_commands"
-
-# User defined slots and values
-CONF_SLOTS = "slots"
-
-# User defined words and pronunciations
-CONF_CUSTOM_WORDS = "custom_words"
-
-# Name replacements for entities
-CONF_NAME_REPLACE = "name_replace"
-
-# If True, Rhasspy conversation agent is registered
-CONF_REGISTER_CONVERSATION = "register_conversation"
-
-# List of intents for Rhasspy to handle
-CONF_HANDLE_INTENTS = "handle_intents"
-
-# Speech responses for intent handling
-CONF_RESPONSE_TEMPLATES = "reponse_templates"
-
-# State names for question intents (e.g., "on" for INTENT_IS_DEVICE_ON)
-CONF_INTENT_STATES = "intent_states"
-
-# Seconds before re-training occurs after new component loaded
-CONF_TRAIN_TIMEOUT = "train_timeout"
-
-# List of possible items that can be added to the shopping list
-CONF_SHOPPING_LIST_ITEMS = "shopping_list_items"
-
-# If True, generate default voice commands
-CONF_MAKE_INTENT_COMMANDS = "make_intent_commands"
-
-# Default settings
-DEFAULT_API_URL = "http://localhost:12101/api"
-DEFAULT_LANGUAGE = "en-US"
-DEFAULT_SLOTS = {
-    "light_color": [
-        "black",
-        "blue",
-        "brown",
-        "gray",
-        "green",
-        "pink",
-        "purple",
-        "violet",
-        "red",
-        "yellow",
-        "orange",
-        "white",
-    ]
-}
-DEFAULT_CUSTOM_WORDS = {}
-DEFAULT_REGISTER_CONVERSATION = True
-DEFAULT_TRAIN_TIMEOUT = 1.0
-DEFAULT_SHOPPING_LIST_ITEMS = []
-DEFAULT_MAKE_INTENT_COMMANDS = True
-
-DEFAULT_NAME_REPLACE = {
-    # English
-    # Replace dashes/underscores with spaces
-    "en-US": {KEY_REGEX: [{r"[_-]": " "}]},
-    #
-    # French
-    # Split dashed words (est-ce -> est -ce)
-    # Replace dashes with spaces
-    "fr-FR": {KEY_REGEX: [{r"-": " -"}, {r"_": " "}]},
-}
-
-DEFAULT_HANDLE_INTENTS = [
-    INTENT_IS_DEVICE_ON,
-    INTENT_IS_DEVICE_OFF,
-    INTENT_IS_COVER_OPEN,
-    INTENT_IS_COVER_CLOSED,
-    INTENT_IS_DEVICE_STATE,
-    INTENT_DEVICE_STATE,
-    INTENT_TRIGGER_AUTOMATION,
-    INTENT_TRIGGER_AUTOMATION_LATER,
-    INTENT_SET_TIMER,
-    INTENT_TIMER_READY,
-]
-
-DEFAULT_RESPONSE_TEMPLATES = {
-    "en-US": {
-        INTENT_IS_DEVICE_ON: T(
-            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} on."
-        ),
-        INTENT_IS_DEVICE_OFF: T(
-            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} off."
-        ),
-        INTENT_IS_COVER_OPEN: T(
-            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} open."
-        ),
-        INTENT_IS_COVER_CLOSED: T(
-            "{{ 'Yes' if entity.state in states else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} closed."
-        ),
-        INTENT_IS_DEVICE_STATE: T(
-            "{{ 'Yes' if entity.state == state else 'No' }}. {{ entity.name }} {{ 'are' if entity.name.endswith('s') else 'is' }} {{ state.replace('_', ' ') }}."
-        ),
-        INTENT_DEVICE_STATE: T(
-            "{{ entity.name }} {% 'are' if entity.name.endswith('s') else 'is' %} {{ entity.state }}."
-        ),
-        INTENT_TIMER_READY: T("Timer is ready."),
-        INTENT_TRIGGER_AUTOMATION: T("Triggered {{ automation.name }}."),
-    }
-}
-
-DEFAULT_INTENT_STATES = {
-    "en-US": {
-        INTENT_IS_DEVICE_ON: ["on"],
-        INTENT_IS_DEVICE_OFF: ["off"],
-        INTENT_IS_COVER_OPEN: ["open"],
-        INTENT_IS_COVER_CLOSED: ["closed"],
-    }
-}
 
 # Config
 COMMAND_SCHEMA = vol.Schema(
@@ -273,9 +175,6 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-# Services
-SERVICE_TRAIN = "train"
-
 SCHEMA_SERVICE_TRAIN = vol.Schema({})
 
 # -----------------------------------------------------------------------------
@@ -285,6 +184,8 @@ async def async_setup(hass, config):
     """Set up Rhasspy integration."""
 
     conf = config.get(DOMAIN)
+
+    # Load configuration
     api_url = conf.get(CONF_API_URL, DEFAULT_API_URL)
     if not api_url.endswith("/"):
         api_url = api_url + "/"
@@ -298,9 +199,10 @@ async def async_setup(hass, config):
         # Register converation agent
         agent = RhasspyConversationAgent(hass, api_url)
         async_set_agent(hass, agent)
-
         _LOGGER.debug("Registered Rhasspy conversation agent")
 
+    # Create Rhasspy provider.
+    # Shared with conversation agent/stt platform.
     provider = RhasspyProvider(hass, conf)
     await provider.async_initialize()
 
@@ -308,7 +210,7 @@ async def async_setup(hass, config):
 
     # Register services
     async def async_train_handle(service):
-        """Service handle for train."""
+        """Service handler for training."""
         _LOGGER.debug("Re-training profile")
         provider.schedule_retrain()
 
@@ -323,6 +225,12 @@ async def async_setup(hass, config):
 
 
 class RhasspyProvider:
+    """
+    Holds configuration for Rhasspy integration.
+    Manages voice command generation.
+    Handles re-training remote Rhasspy server.
+    """
+
     def __init__(self, hass, config):
         self.hass = hass
         self.config = config
@@ -390,10 +298,10 @@ class RhasspyProvider:
         )
         if CONF_RESPONSE_TEMPLATES in self.config:
             for intent_name, template in self.config[CONF_RESPONSE_TEMPLATES].items():
-                # Overwrite default
+                # Overwrite defaults
                 response_templates[intent_name] = template
 
-        # Get states of intents
+        # Get state names for state-based intents
         intent_states = dict(
             DEFAULT_INTENT_STATES.get(
                 self.language, DEFAULT_INTENT_STATES[DEFAULT_LANGUAGE]
@@ -401,9 +309,11 @@ class RhasspyProvider:
         )
         if CONF_INTENT_STATES in self.config:
             for intent_name, states in self.config[CONF_INTENT_STATES].items():
+                # Overwrite defaults
                 intent_states[intent_name] = states
 
-        # Register intent handlers
+        # Register intent handlers.
+        # Pass in response (speech) templates to some handlers.
         handle_intents = set(
             self.config.get(CONF_HANDLE_INTENTS, DEFAULT_HANDLE_INTENTS)
         )
@@ -464,7 +374,7 @@ class RhasspyProvider:
                 number_str = num2words(number)
 
             # Clean up dashes, etc.
-            number_str = self._clean_name(number_str)
+            number_str = self.clean_name(number_str)
 
             # Add substitutions, so digits will show up downstream instead of
             # words.
@@ -500,7 +410,7 @@ class RhasspyProvider:
                 speech_name = entity_name_map[state.entity_id]
             else:
                 # Try to clean name
-                speech_name = self._clean_name(state.name)
+                speech_name = self.clean_name(state.name)
 
             # Clean name but don't replace numbers.
             # This should be matched by intent.async_match_state.
@@ -520,7 +430,13 @@ class RhasspyProvider:
             _LOGGER.debug("Need to retrain profile")
             self.schedule_retrain()
 
-    def _clean_name(self, name: str, replace_numbers=True) -> str:
+    def clean_name(self, name: str, replace_numbers=True) -> str:
+        """
+        Prepares an entity name for speech recognition.
+        Replaces numbers with words.
+        Performs regex substitution using name_replace parameter.
+        """
+
         # Do number replacement
         words = re.split(r"\s+", name)
 
@@ -539,7 +455,7 @@ class RhasspyProvider:
 
         name = " ".join(words)
 
-        # Do regex replacements
+        # Do regex substitution
         for replacements in self.name_regexes:
             for pattern, replacement in replacements.items():
                 name = re.sub(pattern, replacement, name)
@@ -549,7 +465,7 @@ class RhasspyProvider:
     # -------------------------------------------------------------------------
 
     def schedule_retrain(self):
-        """Resets re-train timer."""
+        """Resets re-train timer. Trains Rhasspy when it elapses."""
         if self.train_thread is None:
             self.train_thread = threading.Thread(
                 target=self._training_thread_proc, daemon=True
@@ -574,137 +490,7 @@ class RhasspyProvider:
             self.train_event.clear()
 
             try:
-                sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
-                make_default_commands = self.config.get(
-                    CONF_MAKE_INTENT_COMMANDS, DEFAULT_MAKE_INTENT_COMMANDS
-                )
-
-                if make_default_commands:
-                    # Use default commands
-                    intent_commands = dict(
-                        DEFAULT_INTENT_COMMANDS.get(
-                            self.language, DEFAULT_INTENT_COMMANDS[DEFAULT_LANGUAGE]
-                        )
-                    )
-
-                    # Determine if intents should be included or excluded
-                    if isinstance(make_default_commands, dict):
-                        if KEY_INCLUDE in make_default_commands:
-                            include_intents = set(make_default_commands[KEY_INCLUDE])
-                            intent_commands = {
-                                intent_name: commands
-                                for intent_name, commands in intent_commands.items()
-                                if intent_name in include_intents
-                            }
-                        elif KEY_EXCLUDE in make_default_commands:
-                            for intent_name in make_default_commands[KEY_EXCLUDE]:
-                                del intent_commands[intent_name]
-                else:
-                    # No default commands
-                    intent_commands = {}
-
-                # Override defaults with user commands
-                for intent_type, commands in self.config.get(
-                    CONF_INTENT_COMMANDS, {}
-                ).items():
-                    intent_commands[intent_type] = commands
-
-                # Generate commands
-                for intent_type, commands in intent_commands.items():
-                    if intent_type == INTENT_ADD_ITEM:
-                        # Special case for shopping list
-                        sentences_by_intent[intent_type].extend(
-                            self._get_shopping_list_commands(
-                                intent_commands.get(INTENT_ADD_ITEM, [])
-                            )
-                        )
-                    else:
-                        # All other intents
-                        for command in commands:
-                            for sentence in command_to_sentences(
-                                self.hass, command, self.entities
-                            ):
-                                sentences_by_intent[intent_type].append(sentence)
-
-                # Prune empty intents
-                for intent_type in list(sentences_by_intent):
-                    sentences = [
-                        s
-                        for s in sentences_by_intent[intent_type]
-                        if len(s.strip()) > 0
-                    ]
-                    if len(sentences) > 0:
-                        sentences_by_intent[intent_type] = sentences
-                    else:
-                        del sentences_by_intent[intent_type]
-
-                # Check for custom sentences
-                num_sentences = sum(len(s) for s in sentences_by_intent.values())
-                if num_sentences > 0:
-                    _LOGGER.debug(f"Writing sentences ({self.sentences_url})")
-
-                    # Generate custom sentences.ini
-                    with io.StringIO() as sentences_file:
-                        for intent_type, sentences in sentences_by_intent.items():
-                            print(f"[{intent_type}]", file=sentences_file)
-
-                            for sentence in sentences:
-                                if sentence.startswith("["):
-                                    # Escape "[" at start
-                                    sentence = f"\\{sentence}"
-
-                                print(sentence, file=sentences_file)
-
-                            print("", file=sentences_file)
-
-                        # POST sentences.ini
-                        requests.post(self.sentences_url, sentences_file.getvalue())
-                else:
-                    _LOGGER.warning("No commands generated. Not overwriting sentences.")
-
-                # Check for custom words
-                custom_words = self.config.get("custom_words", {})
-                if len(custom_words) > 0:
-                    _LOGGER.debug(f"Writing custom words ({self.custom_words_url})")
-
-                    with io.StringIO() as custom_words_file:
-                        for word, pronunciations in custom_words.items():
-                            # Accept either string or list of strings
-                            if isinstance(pronunciations, str):
-                                pronunciations = [pronunciations]
-
-                            # word P1 P2 P3...
-                            for pronunciation in pronunciations:
-                                print(
-                                    word.strip(),
-                                    pronunciation.strip(),
-                                    file=custom_words_file,
-                                )
-
-                        # POST custom_words.txt
-                        requests.post(
-                            self.custom_words_url, custom_words_file.getvalue()
-                        )
-
-                # Check for slots
-                slots = dict(DEFAULT_SLOTS)
-                for slot_name, slot_values in self.config.get(CONF_SLOTS, {}).items():
-                    slots[slot_name] = slot_values
-
-                if len(slots) > 0:
-                    _LOGGER.debug(f"Writing slots ({self.slots_url})")
-                    for slot_name, slot_values in list(slots.items()):
-                        # Accept either string or list of strings
-                        if isinstance(slot_values, str):
-                            slots[slot_name] = [slot_values]
-
-                    # POST slots (JSON)
-                    requests.post(self.slots_url, json=slots)
-
-                # Train profile
-                _LOGGER.debug(f"Training profile ({self.train_url})")
-                requests.post(self.train_url)
-
+                train_rhasspy(self)
                 _LOGGER.debug("Ready")
             except Exception as e:
                 _LOGGER.exception("train")
@@ -720,30 +506,3 @@ class RhasspyProvider:
 
             self.train_event.set()
             self.train_timer_event.clear()
-
-    def _get_shopping_list_commands(self, commands):
-        """Generate voice commands for possible shopping list items."""
-        possible_items = self.config.get(
-            CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
-        )
-
-        # Generate clean item names
-        item_names = {
-            item_name: self._clean_name(item_name) for item_name in possible_items
-        }
-
-        for command in commands:
-            if KEY_COMMAND_TEMPLATE in command:
-                templates = [command[KEY_COMMAND_TEMPLATE]]
-            elif KEY_COMMAND_TEMPLATES in command:
-                templates = command[KEY_COMMAND_TEMPLATES]
-            else:
-                # No templates
-                continue
-
-            for item_name, clean_item_name in item_names.items():
-                for template in templates:
-                    template.hass = self.hass
-                    yield template.async_render(
-                        {"item_name": item_name, "clean_item_name": clean_item_name}
-                    )

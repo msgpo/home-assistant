@@ -3,6 +3,6 @@
     "name": "rhasspy",
     "documentation": "https://www.home-assistant.io/integrations/rhasspy",
     "requirements": ["pydash==4.7.5", "num2words==0.5.10"],
-    "dependencies": [],
+    "dependencies": ["http"],
     "codeowners": []
 }
