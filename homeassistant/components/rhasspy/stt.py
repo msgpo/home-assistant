@@ -124,6 +124,7 @@ class RhasspySTTProvider(Provider):
             ) as res:
                 res.raise_for_status()
                 text_result = await res.text()
+                _LOGGER.debug(text_result)
 
                 return SpeechResult(text=text_result, result=SpeechResultState.SUCCESS)
         except Exception:

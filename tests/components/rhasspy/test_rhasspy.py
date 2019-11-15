@@ -4,10 +4,6 @@ Tests for Rhasspy voice assistant integration.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
-import json
-
-import pytest
-
 from homeassistant.helpers import intent
 from homeassistant.components.rhasspy import RhasspyProvider
 from homeassistant.components.rhasspy.const import (
@@ -21,7 +17,6 @@ from homeassistant.components.rhasspy.const import (
     SERVICE_TRAIN,
 )
 from homeassistant.setup import async_setup_component
-
 
 async def test_setup_component(hass):
     """Test setup component."""

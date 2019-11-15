@@ -4,9 +4,9 @@ Support for Rhasspy voice assistant integration.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
+import asyncio
 import logging
 import re
-import threading
 import time
 from typing import Dict
 from urllib.parse import urljoin
@@ -177,6 +177,9 @@ SCHEMA_SERVICE_TRAIN = vol.Schema({})
 async def async_setup(hass, config):
     """Set up Rhasspy integration."""
     conf = config.get(DOMAIN)
+    if conf is None:
+        # Don't initialize
+        return True
 
     # Load configuration
     api_url = conf.get(CONF_API_URL, DEFAULT_API_URL)
@@ -274,14 +277,9 @@ class RhasspyProvider:
             # Use Danish numbers, since Swedish is not supported.
             self.num2words_lang = "dk"
 
-        # Threads/events
-        self.train_thread = None
-        self.train_event = threading.Event()
-
-        self.train_timer_thread = None
-        self.train_timer_event = threading.Event()
+        # Training events
+        self.train_handle: Optional[asyncio.Handle] = None
         self.train_timeout = self.config.get(CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT)
-        self.train_timer_seconds = self.train_timeout
 
     # -------------------------------------------------------------------------
 
@@ -463,43 +461,22 @@ class RhasspyProvider:
 
     def schedule_retrain(self):
         """Reset re-train timer. Train Rhasspy when it elapses."""
-        if self.train_thread is None:
-            self.train_thread = threading.Thread(
-                target=self._training_thread_proc, daemon=True
-            )
-            self.train_thread.start()
+        if self.train_handle is not None:
+            # Cancel previously scheduled training
+            self.train_handle.cancel()
+            self.train_handle = None
 
-        if self.train_timer_thread is None:
-            self.train_timer_thread = threading.Thread(
-                target=self._training_timer_thread_proc, daemon=True
-            )
-            self.train_timer_thread.start()
+        # Schedule new training
+        self.train_handle = asyncio.create_task(self._wait_retrain())
 
-        # Reset timer
-        self.train_timer_seconds = self.train_timeout
-        self.train_timer_event.set()
-
-    def _training_thread_proc(self):
-        """Re-trains Rhassp. Work with a timer to avoid too many re-trains."""
-        while True:
-            # Wait for re-train request
-            self.train_event.wait()
-            self.train_event.clear()
-
-            try:
-                asyncio.run(train_rhasspy(self))
-                _LOGGER.debug("Ready")
-            except Exception:
-                _LOGGER.exception("train")
-
-    def _training_timer_thread_proc(self):
+    async def _wait_retrain(self):
         """Count down a timer and triggers a re-train when it reaches zero."""
-        while True:
-            self.train_timer_event.wait()
+        # Wait for timeout
+        await asyncio.sleep(self.train_timeout)
 
-            while self.train_timer_seconds > 0:
-                time.sleep(0.1)
-                self.train_timer_seconds -= 0.1
-
-            self.train_event.set()
-            self.train_timer_event.clear()
+        try:
+            # Do training
+            await train_rhasspy(self)
+            _LOGGER.debug("Ready")
+        except Exception:
+            _LOGGER.exception("train")

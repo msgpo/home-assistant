@@ -56,7 +56,7 @@ def command_to_sentences(
     elif isinstance(command, Template):
         # Template sentence
         command.hass = hass
-        yield command.render(template_dict or {})
+        yield command.async_render(template_dict or {})
     else:
         # Handle complex command object
         for sentence in _command_object_to_sentences(
