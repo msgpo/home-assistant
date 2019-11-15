@@ -184,16 +184,6 @@ async def async_setup(hass, config):
         api_url = api_url + "/"
         conf[CONF_API_URL] = api_url
 
-    register_conversation = conf.get(
-        CONF_REGISTER_CONVERSATION, DEFAULT_REGISTER_CONVERSATION
-    )
-
-    if register_conversation:
-        # Register converation agent
-        agent = RhasspyConversationAgent(hass, api_url)
-        async_set_agent(hass, agent)
-        _LOGGER.debug("Registered Rhasspy conversation agent")
-
     # Create Rhasspy provider.
     # Shared with conversation agent/stt platform.
     provider = RhasspyProvider(hass, conf)
@@ -201,11 +191,22 @@ async def async_setup(hass, config):
 
     hass.data[DOMAIN] = provider
 
+    # Register conversation agent
+    register_conversation = conf.get(
+        CONF_REGISTER_CONVERSATION, DEFAULT_REGISTER_CONVERSATION
+    )
+
+    if register_conversation:
+        # Register converation agent
+        agent = RhasspyConversationAgent(hass, provider.intent_url)
+        async_set_agent(hass, agent)
+        _LOGGER.debug("Registered Rhasspy conversation agent")
+
     # Register services
     async def async_train_handle(service):
         """Service handler for training."""
         _LOGGER.debug("Re-training profile")
-        provider.schedule_retrain()
+        await train_rhasspy(provider)
 
     hass.services.async_register(
         DOMAIN, SERVICE_TRAIN, async_train_handle, schema=SCHEMA_SERVICE_TRAIN
@@ -245,6 +246,9 @@ class RhasspyProvider:
         # URL to train profile
         self.train_url: str = urljoin(self.api_url, "train")
 
+        # URL for intent recognition
+        self.intent_url: str = urljoin(self.api_url, "text-to-intent")
+
         # e.g., en-US
         self.language: str = config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
 
@@ -276,9 +280,8 @@ class RhasspyProvider:
 
         self.train_timer_thread = None
         self.train_timer_event = threading.Event()
-        self.train_timer_seconds = self.config.get(
-            CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT
-        )
+        self.train_timeout = self.config.get(CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT)
+        self.train_timer_seconds = self.train_timeout
 
     # -------------------------------------------------------------------------
 
@@ -473,7 +476,7 @@ class RhasspyProvider:
             self.train_timer_thread.start()
 
         # Reset timer
-        self.train_timer_seconds = 1
+        self.train_timer_seconds = self.train_timeout
         self.train_timer_event.set()
 
     def _training_thread_proc(self):
@@ -484,7 +487,7 @@ class RhasspyProvider:
             self.train_event.clear()
 
             try:
-                train_rhasspy(self)
+                asyncio.run(train_rhasspy(self))
                 _LOGGER.debug("Ready")
             except Exception:
                 _LOGGER.exception("train")

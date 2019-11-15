@@ -9,9 +9,8 @@ import io
 import logging
 from typing import Dict, List
 
-import requests
-
 from homeassistant.components.shopping_list import INTENT_ADD_ITEM
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_INTENT_COMMANDS,
@@ -37,8 +36,10 @@ from .default_settings import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def train_rhasspy(provider):
+async def train_rhasspy(provider):
     """Generate voice commands and train a remote Rhasspy server."""
+    session = async_get_clientsession(provider.hass)
+
     sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
     make_default_commands = provider.config.get(
         CONF_MAKE_INTENT_COMMANDS, DEFAULT_MAKE_INTENT_COMMANDS
@@ -118,7 +119,10 @@ def train_rhasspy(provider):
                 print("", file=sentences_file)
 
             # POST sentences.ini
-            requests.post(provider.sentences_url, sentences_file.getvalue())
+            async with session.post(
+                provider.sentences_url, data=sentences_file.getvalue()
+            ) as res:
+                _LOGGER.debug("Sentences result: %s", await res.text())
     else:
         _LOGGER.warning("No commands generated. Not overwriting sentences.")
 
@@ -140,7 +144,10 @@ def train_rhasspy(provider):
                     print(word.strip(), pronunciation.strip(), file=custom_words_file)
 
             # POST custom_words.txt
-            requests.post(provider.custom_words_url, custom_words_file.getvalue())
+            async with session.post(
+                provider.custom_words_url, data=custom_words_file.getvalue()
+            ) as res:
+                _LOGGER.debug("Custom words result: %s", await res.text())
 
     # Check for slots
     slots = dict(DEFAULT_SLOTS)
@@ -155,11 +162,13 @@ def train_rhasspy(provider):
                 slots[slot_name] = [slot_values]
 
         # POST slots (JSON)
-        requests.post(provider.slots_url, json=slots)
+        async with session.post(provider.slots_url, json=slots) as res:
+            _LOGGER.debug("Slots result: %s", await res.text())
 
     # Train profile
     _LOGGER.debug("Training profile (%s)", provider.train_url)
-    requests.post(provider.train_url)
+    async with session.post(provider.train_url) as res:
+        _LOGGER.debug("Training result: %s", await res.text())
 
 
 def get_shopping_list_commands(provider, commands):
