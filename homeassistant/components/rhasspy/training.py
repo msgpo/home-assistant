@@ -1,30 +1,35 @@
+"""
+Methods for training a remove Rhasspy server profile.
+
+For more details about this integration, please refer to the documentation at
+https://home-assistant.io/integrations/rhasspy/
+"""
+from collections import defaultdict
 import io
 import logging
-from collections import defaultdict
 from typing import Dict, List
 
 import requests
+
 from homeassistant.components.shopping_list import INTENT_ADD_ITEM
 
 from .const import (
     CONF_INTENT_COMMANDS,
     CONF_MAKE_INTENT_COMMANDS,
     CONF_SHOPPING_LIST_ITEMS,
-    KEY_INCLUDE,
-    KEY_EXCLUDE,
+    CONF_SLOTS,
     KEY_COMMAND_TEMPLATE,
     KEY_COMMAND_TEMPLATES,
-    CONF_SLOTS,
-    CONF_CUSTOM_WORDS,
+    KEY_EXCLUDE,
+    KEY_INCLUDE,
 )
 from .core import command_to_sentences
 from .default_settings import (
     DEFAULT_INTENT_COMMANDS,
-    DEFAULT_MAKE_INTENT_COMMANDS,
     DEFAULT_LANGUAGE,
+    DEFAULT_MAKE_INTENT_COMMANDS,
     DEFAULT_SHOPPING_LIST_ITEMS,
     DEFAULT_SLOTS,
-    DEFAULT_CUSTOM_WORDS,
 )
 
 # -----------------------------------------------------------------------------
@@ -95,7 +100,7 @@ def train_rhasspy(provider):
     # Check for custom sentences
     num_sentences = sum(len(s) for s in sentences_by_intent.values())
     if num_sentences > 0:
-        _LOGGER.debug(f"Writing sentences ({provider.sentences_url})")
+        _LOGGER.debug("Writing sentences (%s)", provider.sentences_url)
 
         # Generate custom sentences.ini
         with io.StringIO() as sentences_file:
@@ -120,7 +125,7 @@ def train_rhasspy(provider):
     # Check for custom words
     custom_words = provider.config.get("custom_words", {})
     if len(custom_words) > 0:
-        _LOGGER.debug(f"Writing custom words ({provider.custom_words_url})")
+        _LOGGER.debug("Writing custom words (%s)", provider.custom_words_url)
 
         with io.StringIO() as custom_words_file:
             for word in sorted(custom_words):
@@ -143,7 +148,7 @@ def train_rhasspy(provider):
         slots[slot_name] = slot_values
 
     if len(slots) > 0:
-        _LOGGER.debug(f"Writing slots ({provider.slots_url})")
+        _LOGGER.debug("Writing slots (%s)", provider.slots_url)
         for slot_name, slot_values in list(slots.items()):
             # Accept either string or list of strings
             if isinstance(slot_values, str):
@@ -153,7 +158,7 @@ def train_rhasspy(provider):
         requests.post(provider.slots_url, json=slots)
 
     # Train profile
-    _LOGGER.debug(f"Training profile ({provider.train_url})")
+    _LOGGER.debug("Training profile (%s)", provider.train_url)
     requests.post(provider.train_url)
 
 

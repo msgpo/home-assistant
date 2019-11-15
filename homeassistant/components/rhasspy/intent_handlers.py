@@ -16,10 +16,6 @@ from homeassistant.helpers.template import Template
 from .const import (
     DOMAIN,
     INTENT_DEVICE_STATE,
-    INTENT_IS_COVER_CLOSED,
-    INTENT_IS_COVER_OPEN,
-    INTENT_IS_DEVICE_OFF,
-    INTENT_IS_DEVICE_ON,
     INTENT_IS_DEVICE_STATE,
     INTENT_SET_TIMER,
     INTENT_TIMER_READY,
@@ -135,16 +131,17 @@ class SetTimerIntent(intent.IntentHandler):
         total_seconds = SetTimerIntent.get_seconds(slots)
 
         # Wait for timer to elapse
-        _LOGGER.debug(f"Waiting for {total_seconds} second(s)")
+        _LOGGER.debug("Waiting for %s second(s)", total_seconds)
         await asyncio.sleep(total_seconds)
 
         return await intent.async_handle(hass, DOMAIN, INTENT_TIMER_READY, {}, "")
 
     @classmethod
     def get_seconds(cls, slots) -> int:
-        # Compute total number of seconds for timer.
-        # Time unit values may have multiple parts, like "30 2" for 32.
+        """Compute total number of seconds for timer."""
         total_seconds = 0
+
+        # Time unit values may have multiple parts, like "30 2" for 32.
         for seconds_str in pydash.get(slots, "seconds.value").strip().split():
             total_seconds += int(seconds_str)
 
@@ -220,7 +217,7 @@ class TriggerAutomationLaterIntent(intent.IntentHandler):
         state = intent.async_match_state(hass, name)
         total_seconds = SetTimerIntent.get_seconds(slots)
 
-        _LOGGER.debug(f"Waiting for {total_seconds} second(s) before triggering {name}")
+        _LOGGER.debug("Waiting for %s second(s) before triggering %s", total_seconds, name)
         await asyncio.sleep(total_seconds)
 
         # Trigger automation

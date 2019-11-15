@@ -12,11 +12,11 @@ from homeassistant.helpers.template import Template as T
 
 from .const import (
     INTENT_DEVICE_STATE,
-    INTENT_IS_DEVICE_STATE,
     INTENT_IS_COVER_CLOSED,
     INTENT_IS_COVER_OPEN,
     INTENT_IS_DEVICE_OFF,
     INTENT_IS_DEVICE_ON,
+    INTENT_IS_DEVICE_STATE,
     INTENT_SET_TIMER,
     INTENT_TIMER_READY,
     INTENT_TRIGGER_AUTOMATION,
@@ -24,10 +24,8 @@ from .const import (
     KEY_COMMAND_TEMPLATES,
     KEY_COMMANDS,
     KEY_DATA,
-    KEY_DATA_TEMPLATE,
     KEY_DOMAINS,
     KEY_ENTITIES,
-    KEY_EXCLUDE,
     KEY_INCLUDE,
     KEY_REGEX,
 )

@@ -10,7 +10,6 @@ from typing import Dict, Iterable, Set
 import attr
 import pydash
 
-from homeassistant.components.stt import SpeechMetadata
 from homeassistant.core import State
 from homeassistant.helpers.template import Template
 
@@ -34,6 +33,8 @@ _LOGGER = logging.getLogger("rhasspy")
 
 @attr.s
 class EntityCommandInfo:
+    """Information used to generate a voice command for an entity."""
+
     entity_id: str = attr.ib()
     friendly_name: str = attr.ib()
     speech_name: str = attr.ib()
@@ -46,117 +47,126 @@ class EntityCommandInfo:
 
 
 def command_to_sentences(
-    hass, command, entities: Dict[str, EntityCommandInfo], template_dict={}
+    hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
 ) -> Iterable[str]:
+    """Transforms an intent command to one or more Rhasspy sentence templates."""
     if isinstance(command, str):
         # Literal sentence
         yield command
     elif isinstance(command, Template):
         # Template sentence
         command.hass = hass
-        yield command.render(template_dict)
+        yield command.render(template_dict or {})
     else:
-        # Command object
-        # - command
-        #   command_template
-        #   commands
-        #   command_templates
-        #   data
-        #   data_template
-        #   include:
-        #     domains
-        #     entities
-        #   exclude:
-        #     domains
-        #     entities
-        commands = []
-        have_templates = False
+        # Handle complex command object
+        for sentence in _command_object_to_sentences(
+            hass, command, entities, template_dict
+        ):
+            yield sentence
 
-        if KEY_COMMAND in command:
-            commands = [command[KEY_COMMAND]]
-        elif KEY_COMMANDS in command:
-            commands = command[KEY_COMMANDS]
-        elif KEY_COMMAND_TEMPLATE in command:
-            commands = [command[KEY_COMMAND_TEMPLATE]]
-            have_templates = True
-        elif KEY_COMMAND_TEMPLATES in command:
-            commands = command[KEY_COMMAND_TEMPLATES]
-            have_templates = True
+def _command_object_to_sentences(
+    hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
+) -> Iterable[str]:
+    """Transforms a complex command object to Rhasspy sentences."""
+    template_dict = template_dict or {}
 
-        # Entities to include
-        possible_entity_ids: Set[str] = set()
+    # Command object
+    # - command
+    #   command_template
+    #   commands
+    #   command_templates
+    #   data
+    #   data_template
+    #   include:
+    #     domains
+    #     entities
+    #   exclude:
+    #     domains
+    #     entities
+    commands = []
+    have_templates = False
 
-        # Lower-cased speech names already used.
-        # Avoids duplicate entities.
-        used_names: Set[str] = set()
+    if KEY_COMMAND in command:
+        commands = [command[KEY_COMMAND]]
+    elif KEY_COMMANDS in command:
+        commands = command[KEY_COMMANDS]
+    elif KEY_COMMAND_TEMPLATE in command:
+        commands = [command[KEY_COMMAND_TEMPLATE]]
+        have_templates = True
+    elif KEY_COMMAND_TEMPLATES in command:
+        commands = command[KEY_COMMAND_TEMPLATES]
+        have_templates = True
 
-        if have_templates:
-            # Gather all entities to be used in command templates
-            if KEY_INCLUDE in command:
-                include_domains = set(
-                    pydash.get(command, f"{KEY_INCLUDE}.{KEY_DOMAINS}", [])
-                )
-                for entity_id, info in entities.items():
-                    if info.state.domain in include_domains:
-                        speech_name_lower = info.speech_name.lower()
-                        if speech_name_lower not in used_names:
-                            possible_entity_ids.add(entity_id)
-                            used_names.add(speech_name_lower)
+    # Entities to include
+    possible_entity_ids: Set[str] = set()
 
-                include_entities = pydash.get(
-                    command, f"{KEY_INCLUDE}.{KEY_ENTITIES}", []
-                )
-                possible_entity_ids.update(include_entities)
+    # Lower-cased speech names already used.
+    # Avoids duplicate entities.
+    used_names: Set[str] = set()
 
-            if KEY_EXCLUDE in command:
-                exclude_entities = pydash.get(
-                    command, f"{KEY_EXCLUDE}.{KEY_ENTITIES}", []
-                )
-                possible_entity_ids.difference_update(exclude_entities)
+    if have_templates:
+        # Gather all entities to be used in command templates
+        if KEY_INCLUDE in command:
+            include_domains = set(
+                pydash.get(command, f"{KEY_INCLUDE}.{KEY_DOMAINS}", [])
+            )
+            for entity_id, info in entities.items():
+                if info.state.domain in include_domains:
+                    speech_name_lower = info.speech_name.lower()
+                    if speech_name_lower not in used_names:
+                        possible_entity_ids.add(entity_id)
+                        used_names.add(speech_name_lower)
 
-        # Generate Rhasspy sentences for each command (template)
-        for sub_command in commands:
-            if not have_templates:
-                # Literal sentence
-                command_strs = [sub_command]
-            elif len(possible_entity_ids) == 0:
-                # Assume template doesn't refer to entities
-                command_strs = command_to_sentences(hass, sub_command, entities)
-            else:
-                # Render template for each possible entity (state)
-                command_strs = []
-                for entity_id in possible_entity_ids:
-                    if entity_id not in entities:
-                        continue
+            include_entities = pydash.get(command, f"{KEY_INCLUDE}.{KEY_ENTITIES}", [])
+            possible_entity_ids.update(include_entities)
 
-                    info = entities.get(entity_id)
-                    template_dict = {
-                        "entity": info.state,
-                        "speech_name": info.speech_name,
-                        "friendly_name": info.friendly_name,
-                    }
-                    command_strs.extend(
-                        command_to_sentences(
-                            hass, sub_command, entities, template_dict=template_dict
-                        )
+        if KEY_EXCLUDE in command:
+            exclude_entities = pydash.get(command, f"{KEY_EXCLUDE}.{KEY_ENTITIES}", [])
+            possible_entity_ids.difference_update(exclude_entities)
+
+    # Generate Rhasspy sentences for each command (template)
+    for sub_command in commands:
+        if not have_templates:
+            # Literal sentence
+            command_strs = [sub_command]
+        elif len(possible_entity_ids) == 0:
+            # Assume template doesn't refer to entities
+            command_strs = command_to_sentences(hass, sub_command, entities)
+        else:
+            # Render template for each possible entity (state)
+            command_strs = []
+            for entity_id in possible_entity_ids:
+                if entity_id not in entities:
+                    continue
+
+                info = entities.get(entity_id)
+                template_dict = {
+                    "entity": info.state,
+                    "speech_name": info.speech_name,
+                    "friendly_name": info.friendly_name,
+                }
+                command_strs.extend(
+                    command_to_sentences(
+                        hass, sub_command, entities, template_dict=template_dict
                     )
+                )
 
-            # Extra data to attach to command
-            command_data = dict(command.get(KEY_DATA, {}))
-            command_data_template = command.get(KEY_DATA_TEMPLATE, {})
+        # Extra data to attach to command
+        command_data = dict(command.get(KEY_DATA, {}))
+        command_data_template = command.get(KEY_DATA_TEMPLATE, {})
 
-            # Render templates
-            for data_key, data_template in command_data_template.items():
-                data_template.hass = hass
-                command_data[data_key] = data_template.render()
+        # Render templates
+        for data_key, data_template in command_data_template.items():
+            data_template.hass = hass
+            command_data[data_key] = data_template.render()
 
-            # Append to sentences.
-            # Use special form "(:){key:value}" to carry
-            # information with the voice command without
-            # changing to wording.
-            for command_str in command_strs:
-                for data_key, data_value in command_data.items():
-                    data_value = str(data_value)
-                    command_str = f"{command_str} (:){{{data_key}:{data_value}}}"
+        # Append to sentences.
+        # Use special form "(:){key:value}" to carry
+        # information with the voice command without
+        # changing to wording.
+        for command_str in command_strs:
+            for data_key, data_value in command_data.items():
+                data_value = str(data_value)
+                command_str = f"{command_str} (:){{{data_key}:{data_value}}}"
 
-                yield command_str
+            yield command_str

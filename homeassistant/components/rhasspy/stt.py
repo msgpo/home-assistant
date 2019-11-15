@@ -4,13 +4,8 @@ Support for Rhasspy speech to text.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
-import asyncio
 import io
 import logging
-import os
-from pathlib import Path
-import shutil
-import time
 from typing import List
 from urllib.parse import urljoin
 import wave
@@ -61,7 +56,7 @@ async def async_get_engine(hass, config, discovery_info):
 
 
 def get_speech_url(hass):
-    # Try to get API URL from Rhasspy provider
+    """Ties to get API URL from Rhasspy provider. Falls back to default."""
     provider = hass.data.get(DOMAIN)
     if provider is not None:
         # Use provider URL
@@ -120,7 +115,7 @@ class RhasspySTTProvider(Provider):
 
                 wav_file.close()
                 wav_data = wav_io.getvalue()
-                _LOGGER.debug(f"Received {len(wav_data)} byte(s)")
+                _LOGGER.debug("Received %s byte(s)", len(wav_data))
 
             # POST to Rhasspy server
             session = async_get_clientsession(self.hass)
@@ -131,7 +126,7 @@ class RhasspySTTProvider(Provider):
                 text_result = await res.text()
 
                 return SpeechResult(text=text_result, result=SpeechResultState.SUCCESS)
-        except Exception as e:
+        except Exception:
             _LOGGER.exception("async_process_audio_stream")
 
         return SpeechResult(text="", result=SpeechResultState.ERROR)

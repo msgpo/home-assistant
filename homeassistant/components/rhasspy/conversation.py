@@ -4,7 +4,7 @@ Rhasspy agent for conversation integration.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
-from abc import ABC, abstractmethod
+from abc import ABC
 import logging
 from urllib.parse import urljoin
 
@@ -31,7 +31,7 @@ class RhasspyConversationAgent(ABC):
 
     async def async_process(self, text: str) -> intent.IntentResponse:
         """Process a sentence."""
-        _LOGGER.debug(f"Processing '{text}' ({self.intent_url})")
+        _LOGGER.debug("Processing '%s' (%s)", text, self.intent_url)
 
         async with aiohttp.ClientSession() as session:
             params = {"nohass": "true"}
@@ -51,5 +51,6 @@ class RhasspyConversationAgent(ABC):
                         {key: {"value": value} for key, value in slots.items()},
                         text,
                     )
-                else:
-                    _LOGGER.warning("Received empty intent")
+
+                # Don't try to handle an empty intent
+                _LOGGER.warning("Received empty intent")

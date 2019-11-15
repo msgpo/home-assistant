@@ -4,41 +4,36 @@ Support for Rhasspy voice assistant integration.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
-import asyncio
-from collections import defaultdict
-import io
 import logging
 import re
 import threading
 import time
-from typing import Dict, Tuple
+from typing import Dict
 from urllib.parse import urljoin
 
 from num2words import num2words
-import pydash
 import voluptuous as vol
 
 from homeassistant.components.conversation import async_set_agent
-from homeassistant.const import ATTR_FRIENDLY_NAME, EVENT_COMPONENT_LOADED
-from homeassistant.core import Event, State, callback
+from homeassistant.const import EVENT_COMPONENT_LOADED
+from homeassistant.core import callback
 from homeassistant.helpers import intent
 import homeassistant.helpers.config_validation as cv
-import homeassistant.util.color as color_util
 
 from .const import (
     CONF_API_URL,
-    CONF_LANGUAGE,
-    CONF_INTENT_COMMANDS,
-    CONF_SLOTS,
     CONF_CUSTOM_WORDS,
+    CONF_HANDLE_INTENTS,
+    CONF_INTENT_COMMANDS,
+    CONF_INTENT_STATES,
+    CONF_LANGUAGE,
+    CONF_MAKE_INTENT_COMMANDS,
     CONF_NAME_REPLACE,
     CONF_REGISTER_CONVERSATION,
-    CONF_HANDLE_INTENTS,
     CONF_RESPONSE_TEMPLATES,
-    CONF_INTENT_STATES,
-    CONF_TRAIN_TIMEOUT,
     CONF_SHOPPING_LIST_ITEMS,
-    CONF_MAKE_INTENT_COMMANDS,
+    CONF_SLOTS,
+    CONF_TRAIN_TIMEOUT,
     DOMAIN,
     INTENT_DEVICE_STATE,
     INTENT_IS_COVER_CLOSED,
@@ -65,21 +60,20 @@ from .const import (
     SUPPORT_LANGUAGES,
 )
 from .conversation import RhasspyConversationAgent
-from .core import EntityCommandInfo, command_to_sentences
+from .core import EntityCommandInfo
 from .default_settings import (
     DEFAULT_API_URL,
-    DEFAULT_LANGUAGE,
-    DEFAULT_SLOTS,
-    DEFAULT_INTENT_COMMANDS,
     DEFAULT_CUSTOM_WORDS,
-    DEFAULT_REGISTER_CONVERSATION,
-    DEFAULT_TRAIN_TIMEOUT,
-    DEFAULT_SHOPPING_LIST_ITEMS,
+    DEFAULT_HANDLE_INTENTS,
+    DEFAULT_INTENT_STATES,
+    DEFAULT_LANGUAGE,
     DEFAULT_MAKE_INTENT_COMMANDS,
     DEFAULT_NAME_REPLACE,
-    DEFAULT_HANDLE_INTENTS,
+    DEFAULT_REGISTER_CONVERSATION,
     DEFAULT_RESPONSE_TEMPLATES,
-    DEFAULT_INTENT_STATES,
+    DEFAULT_SHOPPING_LIST_ITEMS,
+    DEFAULT_SLOTS,
+    DEFAULT_TRAIN_TIMEOUT,
 )
 from .intent_handlers import (
     DeviceStateIntent,
@@ -492,7 +486,7 @@ class RhasspyProvider:
             try:
                 train_rhasspy(self)
                 _LOGGER.debug("Ready")
-            except Exception as e:
+            except Exception:
                 _LOGGER.exception("train")
 
     def _training_timer_thread_proc(self):
