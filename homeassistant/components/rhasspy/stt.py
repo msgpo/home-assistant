@@ -73,6 +73,7 @@ class RhasspySTTProvider(Provider):
     """Rhasspy speech to text provider."""
 
     def __init__(self, hass, conf):
+        """Create Rhasspy speech to text provider."""
         self.hass = hass
         self.config = conf
 
@@ -87,7 +88,6 @@ class RhasspySTTProvider(Provider):
 
         Only streaming of content are allow!
         """
-
         if self.speech_url is None:
             self.speech_url = get_speech_url(self.hass)
 
@@ -174,6 +174,7 @@ class RhasspyWavView(http.HomeAssistantView):
     name = "api:stt:rhasspy:wav"
 
     def __init__(self, hass):
+        """Create POST endpoint for testing speech to text."""
         super().__init__()
         self.hass = hass
         self.speech_url = None

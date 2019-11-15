@@ -176,7 +176,6 @@ SCHEMA_SERVICE_TRAIN = vol.Schema({})
 
 async def async_setup(hass, config):
     """Set up Rhasspy integration."""
-
     conf = config.get(DOMAIN)
 
     # Load configuration
@@ -221,11 +220,13 @@ async def async_setup(hass, config):
 class RhasspyProvider:
     """
     Holds configuration for Rhasspy integration.
+
     Manages voice command generation.
     Handles re-training remote Rhasspy server.
     """
 
     def __init__(self, hass, config):
+        """Set up Rhasspy provider."""
         self.hass = hass
         self.config = config
 
@@ -283,7 +284,6 @@ class RhasspyProvider:
 
     async def async_initialize(self):
         """Initialize Rhasspy provider."""
-
         # Get intent responses
         response_templates = dict(
             DEFAULT_RESPONSE_TEMPLATES.get(
@@ -426,11 +426,11 @@ class RhasspyProvider:
 
     def clean_name(self, name: str, replace_numbers=True) -> str:
         """
-        Prepares an entity name for speech recognition.
-        Replaces numbers with words.
-        Performs regex substitution using name_replace parameter.
-        """
+        Prepare an entity name for speech recognition.
 
+        Replace numbers with words.
+        Perform regex substitution using name_replace parameter.
+        """
         # Do number replacement
         words = re.split(r"\s+", name)
 
@@ -459,7 +459,7 @@ class RhasspyProvider:
     # -------------------------------------------------------------------------
 
     def schedule_retrain(self):
-        """Resets re-train timer. Trains Rhasspy when it elapses."""
+        """Reset re-train timer. Train Rhasspy when it elapses."""
         if self.train_thread is None:
             self.train_thread = threading.Thread(
                 target=self._training_thread_proc, daemon=True
@@ -477,7 +477,7 @@ class RhasspyProvider:
         self.train_timer_event.set()
 
     def _training_thread_proc(self):
-        """Re-trains Rhasspy. Works with a timer to avoid too many re-trains."""
+        """Re-trains Rhassp. Work with a timer to avoid too many re-trains."""
         while True:
             # Wait for re-train request
             self.train_event.wait()
@@ -490,7 +490,7 @@ class RhasspyProvider:
                 _LOGGER.exception("train")
 
     def _training_timer_thread_proc(self):
-        """Counts down a timer and triggers a re-train when it reaches zero."""
+        """Count down a timer and triggers a re-train when it reaches zero."""
         while True:
             self.train_timer_event.wait()
 

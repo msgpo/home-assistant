@@ -38,7 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def train_rhasspy(provider):
-    """Generates voice commands and trains a remote Rhasspy server."""
+    """Generate voice commands and train a remote Rhasspy server."""
     sentences_by_intent: Dict[str, List[str]] = defaultdict(list)
     make_default_commands = provider.config.get(
         CONF_MAKE_INTENT_COMMANDS, DEFAULT_MAKE_INTENT_COMMANDS
@@ -163,7 +163,7 @@ def train_rhasspy(provider):
 
 
 def get_shopping_list_commands(provider, commands):
-    """Generates voice commands for possible shopping list items."""
+    """Generate voice commands for possible shopping list items."""
     possible_items = provider.config.get(
         CONF_SHOPPING_LIST_ITEMS, DEFAULT_SHOPPING_LIST_ITEMS
     )

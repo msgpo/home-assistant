@@ -49,7 +49,7 @@ class EntityCommandInfo:
 def command_to_sentences(
     hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
 ) -> Iterable[str]:
-    """Transforms an intent command to one or more Rhasspy sentence templates."""
+    """Transform an intent command to one or more Rhasspy sentence templates."""
     if isinstance(command, str):
         # Literal sentence
         yield command
@@ -67,7 +67,7 @@ def command_to_sentences(
 def _command_object_to_sentences(
     hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
 ) -> Iterable[str]:
-    """Transforms a complex command object to Rhasspy sentences."""
+    """Transform a complex command object to Rhasspy sentences."""
     template_dict = template_dict or {}
 
     # Command object

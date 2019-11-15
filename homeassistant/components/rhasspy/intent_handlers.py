@@ -37,9 +37,11 @@ class IsDeviceStateIntent(intent.IntentHandler):
     slot_schema = {"name": str, "state": str}
 
     def __init__(self, speech_template: Template):
+        """Create IsDeviceState intent handler."""
         self.speech_template = speech_template
 
     async def async_handle(self, intent_obj):
+        """Handle intent and generate speech."""
         hass = intent_obj.hass
         slots = self.async_validate_slots(intent_obj.slots)
         name = slots["name"]["value"]
@@ -65,9 +67,11 @@ class DeviceStateIntent(intent.IntentHandler):
     slot_schema = {"name": str}
 
     def __init__(self, speech_template: Template):
+        """Create DeviceState intent handler."""
         self.speech_template = speech_template
 
     async def async_handle(self, intent_obj):
+        """Handle intent and generate speech."""
         hass = intent_obj.hass
         slots = self.async_validate_slots(intent_obj.slots)
         name = slots["name"]["value"]
@@ -87,17 +91,20 @@ class DeviceStateIntent(intent.IntentHandler):
 
 
 def make_state_handler(intent_obj, states: List[str], speech_template: Template):
-    """Generates an intent handler that checks if a device is in a set of states."""
+    """Generate an intent handler that checks if a device is in a set of states."""
     class StateIntent(intent.IntentHandler):
-        """Confirms or disconfirms the specific state of a device."""
+        """Confirm or disconfirm the specific state of a device."""
+
         intent_type = intent_obj
         slot_schema = {"name": str}
 
         def __init__(self, states: List[str], speech_template: Template):
+            """Create intent handler."""
             self.speech_template = speech_template
             self.states = states
 
         async def async_handle(self, intent_obj):
+            """Handle intent and generate speech."""
             hass = intent_obj.hass
             slots = self.async_validate_slots(intent_obj.slots)
             name = slots["name"]["value"]
@@ -121,11 +128,13 @@ def make_state_handler(intent_obj, states: List[str], speech_template: Template)
 
 
 class SetTimerIntent(intent.IntentHandler):
-    """Waits for a specified amount of time and then generates an INTENT_TIMER_READY."""
+    """Wait for a specified amount of time and then generate an TimerReady."""
+
     intent_type = INTENT_SET_TIMER
     slot_schema = {"hours": str, "minutes": str, "seconds": str}
 
     async def async_handle(self, intent_obj):
+        """Wait for timer then generate TimerReady intent."""
         hass = intent_obj.hass
         slots = self.async_validate_slots(intent_obj.slots)
         total_seconds = SetTimerIntent.get_seconds(slots)
@@ -155,13 +164,16 @@ class SetTimerIntent(intent.IntentHandler):
 
 
 class TimerReadyIntent(intent.IntentHandler):
-    """Generated after INTENT_SET_TIMER timeout elapses."""
+    """Intent generated after SetTimer timeout elapses."""
+
     intent_type = INTENT_TIMER_READY
 
     def __init__(self, speech_template: Template):
+        """Create TimerReady intent handler."""
         self.speech_template = speech_template
 
     async def async_handle(self, intent_obj):
+        """Handle intent and generate speech."""
         hass = intent_obj.hass
 
         # Generate speech from a template
@@ -178,14 +190,17 @@ class TimerReadyIntent(intent.IntentHandler):
 
 
 class TriggerAutomationIntent(intent.IntentHandler):
-    """Triggers an automation by name and generates speech according to a template."""
+    """Trigger an automation by name and generate speech according to a template."""
+
     intent_type = INTENT_TRIGGER_AUTOMATION
     slot_schema = {"name": str}
 
     def __init__(self, speech_template: Template):
+        """Create TriggerAutomation intent handler."""
         self.speech_template = speech_template
 
     async def async_handle(self, intent_obj):
+        """Trigger automation and generate speech."""
         hass = intent_obj.hass
         slots = self.async_validate_slots(intent_obj.slots)
         name = slots["name"]["value"]
@@ -206,18 +221,22 @@ class TriggerAutomationIntent(intent.IntentHandler):
 
 
 class TriggerAutomationLaterIntent(intent.IntentHandler):
-    """Waits for a specified amount of time and then triggers an automation using INTENT_TRIGGER_AUTOMATION."""
+    """Wait for a specified amount of time and then trigger an automation using TriggerAutomation."""
+
     intent_type = INTENT_TRIGGER_AUTOMATION_LATER
     slot_schema = {"name": str, "hours": str, "minutes": str, "seconds": str}
 
     async def async_handle(self, intent_obj):
+        """Wait for timeout then generate TriggerAutomation."""
         hass = intent_obj.hass
         slots = self.async_validate_slots(intent_obj.slots)
         name = slots["name"]["value"]
         state = intent.async_match_state(hass, name)
         total_seconds = SetTimerIntent.get_seconds(slots)
 
-        _LOGGER.debug("Waiting for %s second(s) before triggering %s", total_seconds, name)
+        _LOGGER.debug(
+            "Waiting for %s second(s) before triggering %s", total_seconds, name
+        )
         await asyncio.sleep(total_seconds)
 
         # Trigger automation
@@ -225,7 +244,7 @@ class TriggerAutomationLaterIntent(intent.IntentHandler):
             "automation", "trigger", {"entity_id": state.entity_id}
         )
 
-        # Use INTENT_TRIGGER_AUTOMATION
+        # Use TriggerAutomation
         return await intent.async_handle(
             hass, DOMAIN, INTENT_TRIGGER_AUTOMATION, {"name": name}, ""
         )
