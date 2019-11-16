@@ -30,7 +30,7 @@ from .const import (
     KEY_REGEX,
 )
 
-DEFAULT_API_URL = "http://localhost:12101/api"
+DEFAULT_API_URL = "http://localhost:12101/api/"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_SLOTS = {
     "light_color": [
@@ -114,16 +114,54 @@ DEFAULT_INTENT_STATES = {
 
 ON_OFF_DOMAINS = ["light", "switch", "camera", "fan", "media_player"]
 
+# Include/exclude domains/entities by intent for auto-generated commands.
+DEFAULT_INTENT_FILTERS = {
+    intent.INTENT_TURN_ON: {
+        KEY_INCLUDE: {KEY_DOMAINS: ON_OFF_DOMAINS, KEY_ENTITIES: ["group.all_lights"]}
+    },
+    intent.INTENT_TURN_OFF: {
+        KEY_INCLUDE: {KEY_DOMAINS: ON_OFF_DOMAINS, KEY_ENTITIES: ["group.all_lights"]}
+    },
+    intent.INTENT_TOGGLE: {
+        KEY_INCLUDE: {KEY_DOMAINS: ON_OFF_DOMAINS, KEY_ENTITIES: ["group.all_lights"]}
+    },
+    INTENT_OPEN_COVER: {
+        KEY_INCLUDE: {KEY_DOMAINS: ["cover"], KEY_ENTITIES: ["group.all_covers"]}
+    },
+    INTENT_CLOSE_COVER: {
+        KEY_INCLUDE: {KEY_DOMAINS: ["cover"], KEY_ENTITIES: ["group.all_covers"]}
+    },
+    INTENT_SET: {
+        KEY_INCLUDE: {KEY_DOMAINS: ["light"], KEY_ENTITIES: ["group.all_lights"]}
+    },
+    INTENT_DEVICE_STATE: {
+        KEY_INCLUDE: {
+            KEY_DOMAINS: ["light", "switch", "binary_sensor", "sensor", "cover"],
+            KEY_ENTITIES: ["group.all_lights", "group.all_covers"],
+        }
+    },
+    INTENT_IS_DEVICE_ON: {
+        KEY_INCLUDE: {KEY_DOMAINS: ON_OFF_DOMAINS, KEY_ENTITIES: ["group.all_lights"]}
+    },
+    INTENT_IS_DEVICE_OFF: {
+        KEY_INCLUDE: {KEY_DOMAINS: ON_OFF_DOMAINS, KEY_ENTITIES: ["group.all_lights"]}
+    },
+    INTENT_IS_COVER_OPEN: {
+        KEY_INCLUDE: {KEY_DOMAINS: ["cover"], KEY_ENTITIES: ["group.all_covers"]}
+    },
+    INTENT_IS_COVER_CLOSED: {
+        KEY_INCLUDE: {KEY_DOMAINS: ["cover"], KEY_ENTITIES: ["group.all_covers"]}
+    },
+    INTENT_TRIGGER_AUTOMATION: {KEY_INCLUDE: {KEY_DOMAINS: ["automation"]}},
+    INTENT_TRIGGER_AUTOMATION_LATER: {KEY_INCLUDE: {KEY_DOMAINS: ["automation"]}},
+}
+
 # Default command templates by intent.
 # Includes built-in Home Assistant intents as well as Rhasspy intents.
 DEFAULT_INTENT_COMMANDS = {
     "en-US": {
         intent.INTENT_TURN_ON: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ON_OFF_DOMAINS,
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "turn on [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
@@ -131,15 +169,11 @@ DEFAULT_INTENT_COMMANDS = {
                     T(
                         "turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"
                     ),
-                ],
+                ]
             }
         ],
         intent.INTENT_TURN_OFF: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ON_OFF_DOMAINS,
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "turn off [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
@@ -147,7 +181,7 @@ DEFAULT_INTENT_COMMANDS = {
                     T(
                         "turn [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} off"
                     ),
-                ],
+                ]
             }
         ],
         intent.INTENT_TOGGLE: [
@@ -185,34 +219,22 @@ DEFAULT_INTENT_COMMANDS = {
         ],
         INTENT_OPEN_COVER: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ["cover"],
-                    KEY_ENTITIES: ["group.all_covers"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T("open [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
                     T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} open"),
-                ],
+                ]
             }
         ],
         INTENT_CLOSE_COVER: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ["cover"],
-                    KEY_ENTITIES: ["group.all_covers"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T("close [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"),
                     T("[the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} close"),
-                ],
+                ]
             }
         ],
         INTENT_SET: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ["light"],
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "set [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [to] ($light_color){color}"
@@ -226,24 +248,11 @@ DEFAULT_INTENT_COMMANDS = {
                     T(
                         "set [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} [to] (maximum){brightness:100} brightness"
                     ),
-                ],
+                ]
             }
         ],
         INTENT_DEVICE_STATE: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: [
-                        "light",
-                        "switch",
-                        "binary_sensor",
-                        "sensor",
-                        "cover",
-                    ],
-                    KEY_ENTITIES: [
-                        "group.all_lights",
-                        "group.all_covers",
-                    ],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "what (is | are) [the|a|an] (state | states) of [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
@@ -251,33 +260,25 @@ DEFAULT_INTENT_COMMANDS = {
                     T(
                         "what [is | are] [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} (state | states)"
                     ),
-                ],
+                ]
             }
         ],
         INTENT_IS_DEVICE_ON: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ON_OFF_DOMAINS,
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} on"
                     )
-                ],
+                ]
             }
         ],
         INTENT_IS_DEVICE_OFF: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ON_OFF_DOMAINS,
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} off"
                     )
-                ],
+                ]
             }
         ],
         INTENT_IS_COVER_OPEN: [
@@ -295,15 +296,11 @@ DEFAULT_INTENT_COMMANDS = {
         ],
         INTENT_IS_COVER_CLOSED: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ["cover"],
-                    KEY_ENTITIES: ["group.all_covers"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} closed"
                     )
-                ],
+                ]
             }
         ],
         INTENT_IS_DEVICE_STATE: [
@@ -314,17 +311,15 @@ DEFAULT_INTENT_COMMANDS = {
         ],
         INTENT_TRIGGER_AUTOMATION: [
             {
-                KEY_INCLUDE: {KEY_DOMAINS: ["automation"]},
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(run | execute | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}}"
                     )
-                ],
+                ]
             }
         ],
         INTENT_TRIGGER_AUTOMATION_LATER: [
             {
-                KEY_INCLUDE: {KEY_DOMAINS: ["automation"]},
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(run | execute | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}} (in | after) <SetTimer.time_expr>"
@@ -332,7 +327,7 @@ DEFAULT_INTENT_COMMANDS = {
                     T(
                         "(in | after) <SetTimer.time_expr> (run | trigger) [program | automation] ({{ speech_name }}){name:{{ friendly_name }}}"
                     ),
-                ],
+                ]
             }
         ],
         INTENT_SET_TIMER: [

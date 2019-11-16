@@ -47,7 +47,11 @@ class EntityCommandInfo:
 
 
 def command_to_sentences(
-    hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
+    hass,
+    command,
+    entities: Dict[str, EntityCommandInfo],
+    intent_filters=None,
+    template_dict=None,
 ) -> Iterable[str]:
     """Transform an intent command to one or more Rhasspy sentence templates."""
     if isinstance(command, str):
@@ -60,12 +64,21 @@ def command_to_sentences(
     else:
         # Handle complex command object
         for sentence in _command_object_to_sentences(
-            hass, command, entities, template_dict
+            hass,
+            command,
+            entities,
+            intent_filters=intent_filters,
+            template_dict=template_dict,
         ):
             yield sentence
 
+
 def _command_object_to_sentences(
-    hass, command, entities: Dict[str, EntityCommandInfo], template_dict=None
+    hass,
+    command,
+    entities: Dict[str, EntityCommandInfo],
+    intent_filters=None,
+    template_dict=None,
 ) -> Iterable[str]:
     """Transform a complex command object to Rhasspy sentences."""
     template_dict = template_dict or {}
@@ -85,6 +98,7 @@ def _command_object_to_sentences(
     #     entities
     commands = []
     have_templates = False
+    intent_filters = intent_filters or {}
 
     if KEY_COMMAND in command:
         commands = [command[KEY_COMMAND]]
@@ -105,24 +119,51 @@ def _command_object_to_sentences(
     used_names: Set[str] = set()
 
     if have_templates:
+        # Intent-level include/exclude settings
+        if KEY_INCLUDE in intent_filters:
+            include_filters = intent_filters[KEY_INCLUDE]
+            intent_include_domains = set(include_filters.get(KEY_DOMAINS, []))
+
+            # Include intent-level entiies
+            possible_entity_ids.update(include_filters.get(KEY_ENTITIES, []))
+        else:
+            # No inclusions
+            intent_include_domains = set()
+
+        if KEY_EXCLUDE in intent_filters:
+            exclude_filters = intent_filters[KEY_EXCLUDE]
+            intent_exclude_domains = set(exclude_filters.get(KEY_DOMAINS, []))
+            intent_exclude_entities = set(exclude_filters.get(KEY_ENTITIES, []))
+        else:
+            # No exclusions
+            intent_exclude_domains = set()
+            intent_exclude_entities = set()
+
         # Gather all entities to be used in command templates
+        include_domains = set(intent_include_domains)
         if KEY_INCLUDE in command:
-            include_domains = set(
-                pydash.get(command, f"{KEY_INCLUDE}.{KEY_DOMAINS}", [])
-            )
-            for entity_id, info in entities.items():
-                if info.state.domain in include_domains:
+            # Include command-specific domains
+            include_domains.update(command[KEY_INCLUDE].get(KEY_DOMAINS, []))
+
+        for entity_id, info in entities.items():
+            if (len(include_domains) == 0) or (info.state.domain in include_domains):
+                if not info.state.domain in intent_exclude_domains:
                     speech_name_lower = info.speech_name.lower()
                     if speech_name_lower not in used_names:
                         possible_entity_ids.add(entity_id)
                         used_names.add(speech_name_lower)
 
-            include_entities = pydash.get(command, f"{KEY_INCLUDE}.{KEY_ENTITIES}", [])
-            possible_entity_ids.update(include_entities)
+        if KEY_INCLUDE in command:
+            # Include command-specific entities
+            possible_entity_ids.update(command[KEY_INCLUDE].get(KEY_ENTITIES, []))
 
+        exclude_entities = set(intent_exclude_entities)
         if KEY_EXCLUDE in command:
-            exclude_entities = pydash.get(command, f"{KEY_EXCLUDE}.{KEY_ENTITIES}", [])
-            possible_entity_ids.difference_update(exclude_entities)
+            # Exclude command-specific entities
+            exclude_entities.update(command[KEY_EXCLUDE][KEY_ENTITIES])
+
+        # Exclude intent-level entities
+        possible_entity_ids.difference_update(exclude_entities)
 
     # Generate Rhasspy sentences for each command (template)
     for sub_command in commands:

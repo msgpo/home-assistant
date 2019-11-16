@@ -89,6 +89,9 @@ CONF_RESPONSE_TEMPLATES = "reponse_templates"
 # State names for question intents (e.g., "on" for INTENT_IS_DEVICE_ON)
 CONF_INTENT_STATES = "intent_states"
 
+# Entities/domains to include/exclude for auto-generated commands
+CONF_INTENT_FILTERS = "intent_filters"
+
 # Seconds before re-training occurs after new component loaded
 CONF_TRAIN_TIMEOUT = "train_timeout"
 
@@ -105,6 +108,7 @@ KEY_COMMAND_TEMPLATE = "command_template"
 KEY_COMMAND_TEMPLATES = "command_templates"
 KEY_DATA = "data"
 KEY_DATA_TEMPLATE = "data_template"
+KEY_DEFAULT_COMMANDS = "default_commands"
 KEY_INCLUDE = "include"
 KEY_EXCLUDE = "exclude"
 KEY_DOMAINS = "domains"
@@ -116,3 +120,4 @@ KEY_REGEX = "regex"
 # -----------------------------------------------------------------------------
 
 SERVICE_TRAIN = "train"
+EVENT_RHASSPY_TRAINED = "rhasspy_trained"

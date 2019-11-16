@@ -25,6 +25,7 @@ from .const import (
     CONF_CUSTOM_WORDS,
     CONF_HANDLE_INTENTS,
     CONF_INTENT_COMMANDS,
+    CONF_INTENT_FILTERS,
     CONF_INTENT_STATES,
     CONF_LANGUAGE,
     CONF_MAKE_INTENT_COMMANDS,
@@ -51,6 +52,7 @@ from .const import (
     KEY_COMMANDS,
     KEY_DATA,
     KEY_DATA_TEMPLATE,
+    KEY_DEFAULT_COMMANDS,
     KEY_DOMAINS,
     KEY_ENTITIES,
     KEY_EXCLUDE,
@@ -115,6 +117,19 @@ COMMAND_SCHEMA = vol.Schema(
     }
 )
 
+INTENT_FILTER_SCHEMA = vol.Schema(
+    {
+        vol.Optional(KEY_INCLUDE): vol.Schema(
+            {vol.Optional(KEY_DOMAINS): vol.All(cv.ensure_list, [str])},
+            {vol.Optional(KEY_ENTITIES): vol.All(cv.ensure_list, [cv.entity_id])},
+        ),
+        vol.Optional(KEY_EXCLUDE): vol.Schema(
+            {vol.Optional(KEY_DOMAINS): vol.All(cv.ensure_list, [str])},
+            {vol.Optional(KEY_ENTITIES): vol.All(cv.ensure_list, [cv.entity_id])},
+        ),
+    }
+)
+
 CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.All(
@@ -143,6 +158,9 @@ CONFIG_SCHEMA = vol.Schema(
                 },
                 vol.Optional(CONF_INTENT_STATES): vol.Schema(
                     {str: vol.All(cv.ensure_list, [str])}
+                ),
+                vol.Optional(CONF_INTENT_FILTERS): vol.Schema(
+                    {str: INTENT_FILTER_SCHEMA}
                 ),
                 vol.Optional(CONF_TRAIN_TIMEOUT, DEFAULT_TRAIN_TIMEOUT): float,
                 vol.Optional(
@@ -432,11 +450,18 @@ class RhasspyProvider:
         Replace numbers with words.
         Perform regex substitution using name_replace parameter.
         """
-        # Do number replacement
-        words = re.split(r"\s+", name)
+        # Do regex substitution
+        for replacements in self.name_regexes:
+            for pattern, replacement in replacements.items():
+                name = re.sub(pattern, replacement, name)
 
         if replace_numbers:
-            # Convert numbers to words
+            # Do number replacement
+            words = re.split(r"\s+", name)
+            changed = False
+
+            # Convert numbers to words.
+            # e.g., 75 -> seventy five
             for i, word in enumerate(words):
                 try:
                     number = float(word)
@@ -445,15 +470,17 @@ class RhasspyProvider:
                     except NotImplementedError:
                         # Use default language (U.S. English)
                         words[i] = num2words(number)
+
+                    changed = True
+
+                    # seventy-five -> seventy five
+                    words[i] = words[i].replace("-", " ")
                 except ValueError:
                     pass
 
-        name = " ".join(words)
-
-        # Do regex substitution
-        for replacements in self.name_regexes:
-            for pattern, replacement in replacements.items():
-                name = re.sub(pattern, replacement, name)
+            if changed:
+                # Re-create name
+                name = " ".join(words)
 
         return name
 

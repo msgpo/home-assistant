@@ -14,9 +14,11 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_INTENT_COMMANDS,
+    CONF_INTENT_FILTERS,
     CONF_MAKE_INTENT_COMMANDS,
     CONF_SHOPPING_LIST_ITEMS,
     CONF_SLOTS,
+    EVENT_RHASSPY_TRAINED,
     KEY_COMMAND_TEMPLATE,
     KEY_COMMAND_TEMPLATES,
     KEY_EXCLUDE,
@@ -25,6 +27,7 @@ from .const import (
 from .core import command_to_sentences
 from .default_settings import (
     DEFAULT_INTENT_COMMANDS,
+    DEFAULT_INTENT_FILTERS,
     DEFAULT_LANGUAGE,
     DEFAULT_MAKE_INTENT_COMMANDS,
     DEFAULT_SHOPPING_LIST_ITEMS,
@@ -73,6 +76,13 @@ async def train_rhasspy(provider):
     for intent_type, commands in provider.config.get(CONF_INTENT_COMMANDS, {}).items():
         intent_commands[intent_type] = commands
 
+    # Include/exclude domains/entities per intent for auto-generated commands
+    intent_filters = dict(DEFAULT_INTENT_FILTERS)
+
+    # Override defaults with user filters
+    for intent_type, filters in provider.config.get(CONF_INTENT_FILTERS, {}).items():
+        intent_filters[intent_type] = filters
+
     # Generate commands
     for intent_type, commands in intent_commands.items():
         if intent_type == INTENT_ADD_ITEM:
@@ -86,7 +96,10 @@ async def train_rhasspy(provider):
             # All other intents
             for command in commands:
                 for sentence in command_to_sentences(
-                    provider.hass, command, provider.entities
+                    provider.hass,
+                    command,
+                    provider.entities,
+                    intent_filters=intent_filters.get(intent_type, {}),
                 ):
                     sentences_by_intent[intent_type].append(sentence)
 
@@ -169,6 +182,9 @@ async def train_rhasspy(provider):
     _LOGGER.debug("Training profile (%s)", provider.train_url)
     async with session.post(provider.train_url) as res:
         _LOGGER.debug("Training result: %s", await res.text())
+
+    # Fire event
+    provider.hass.bus.async_fire(EVENT_RHASSPY_TRAINED, {})
 
 
 def get_shopping_list_commands(provider, commands):
