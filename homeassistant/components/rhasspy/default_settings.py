@@ -186,10 +186,6 @@ DEFAULT_INTENT_COMMANDS = {
         ],
         intent.INTENT_TOGGLE: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ON_OFF_DOMAINS,
-                    KEY_ENTITIES: ["group.all_lights"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "toggle [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}}"
@@ -283,10 +279,6 @@ DEFAULT_INTENT_COMMANDS = {
         ],
         INTENT_IS_COVER_OPEN: [
             {
-                KEY_INCLUDE: {
-                    KEY_DOMAINS: ["cover"],
-                    KEY_ENTITIES: ["group.all_covers"],
-                },
                 KEY_COMMAND_TEMPLATES: [
                     T(
                         "(is | are) [the|a|an] ({{ speech_name }}){name:{{ friendly_name }}} open"

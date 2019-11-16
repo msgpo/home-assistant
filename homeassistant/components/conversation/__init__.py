@@ -129,7 +129,7 @@ class ConversationHandleView(http.HomeAssistantView):
         hass = request.app["hass"]
 
         try:
-            intent_name = data["intent"]
+            intent_name = data["name"]
             slots = {
                 key: {"value": value} for key, value in data.get("data", {}).items()
             }
