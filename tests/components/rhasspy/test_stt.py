@@ -8,15 +8,7 @@ import io
 import wave
 
 import pytest
-from homeassistant.components.rhasspy import RhasspyProvider
-from homeassistant.components.rhasspy.const import (
-    CONF_MAKE_INTENT_COMMANDS,
-    CONF_REGISTER_CONVERSATION,
-    CONF_SLOTS,
-    DOMAIN,
-    KEY_COMMAND,
-    SERVICE_TRAIN,
-)
+
 from homeassistant.setup import async_setup_component
 
 SPEECH_URL = "http://localhost:12101/api/speech-to-text"
@@ -36,7 +28,6 @@ async def test_settings(hass, hass_client):
     """Test settings."""
     client = await hass_client()
     response = await client.get("/api/stt/rhasspy")
-    response_data = await response.json()
     assert response.status == 200
 
 
@@ -46,11 +37,13 @@ async def test_stt(hass, hass_client, aioclient_mock):
 
     # Create fake WAV file
     with io.BytesIO() as wav_io:
-        with wave.open(wav_io, mode="wb") as wav_file:
-            wav_file.setframerate(16000)
-            wav_file.setsampwidth(2)
-            wav_file.setnchannels(1)
-            wav_file.writeframes(b"Test")
+        # Can't use context manager because of pylint
+        wav_file: wave.Wave_write = wave.open(wav_io, mode="wb")
+        wav_file.setframerate(16000)
+        wav_file.setsampwidth(2)
+        wav_file.setnchannels(1)
+        wav_file.writeframes(b"Test")
+        wav_file.close()
 
         wav_data = wav_io.getvalue()
 

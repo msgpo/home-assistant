@@ -127,7 +127,7 @@ class RhasspySTTProvider(Provider):
                 _LOGGER.debug(text_result)
 
                 return SpeechResult(text=text_result, result=SpeechResultState.SUCCESS)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("async_process_audio_stream")
 
         return SpeechResult(text="", result=SpeechResultState.ERROR)

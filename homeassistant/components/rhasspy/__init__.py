@@ -7,8 +7,7 @@ https://home-assistant.io/integrations/rhasspy/
 import asyncio
 import logging
 import re
-import time
-from typing import Dict
+from typing import Dict, Optional
 from urllib.parse import urljoin
 
 from num2words import num2words
@@ -52,7 +51,6 @@ from .const import (
     KEY_COMMANDS,
     KEY_DATA,
     KEY_DATA_TEMPLATE,
-    KEY_DEFAULT_COMMANDS,
     KEY_DOMAINS,
     KEY_ENTITIES,
     KEY_EXCLUDE,
@@ -505,5 +503,5 @@ class RhasspyProvider:
             # Do training
             await train_rhasspy(self)
             _LOGGER.debug("Ready")
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             _LOGGER.exception("train")

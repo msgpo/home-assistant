@@ -8,31 +8,23 @@ import asyncio
 import configparser
 from urllib.parse import urljoin
 
-from homeassistant.helpers import intent
 from homeassistant.components.cover import INTENT_CLOSE_COVER, INTENT_OPEN_COVER
-from homeassistant.components.rhasspy import RhasspyProvider
 from homeassistant.components.rhasspy.const import (
-    CONF_CUSTOM_WORDS,
-    CONF_INTENT_COMMANDS,
     CONF_INTENT_FILTERS,
     CONF_MAKE_INTENT_COMMANDS,
-    CONF_REGISTER_CONVERSATION,
     CONF_SHOPPING_LIST_ITEMS,
-    CONF_SLOTS,
-    DOMAIN,
     EVENT_RHASSPY_TRAINED,
     INTENT_TRIGGER_AUTOMATION,
     INTENT_TRIGGER_AUTOMATION_LATER,
-    KEY_COMMAND,
     KEY_DOMAINS,
     KEY_INCLUDE,
-    SERVICE_TRAIN,
 )
 from homeassistant.components.rhasspy.default_settings import (
     DEFAULT_API_URL,
     DEFAULT_INTENT_COMMANDS,
     DEFAULT_LANGUAGE,
 )
+from homeassistant.helpers import intent
 from homeassistant.setup import async_setup_component
 
 
@@ -61,8 +53,6 @@ async def test_demo_commands(hass, aioclient_mock):
         async_setup_component(hass, "rhasspy", config),
     )
 
-    provider = hass.data[DOMAIN]
-
     # Wait for training to complete
     await train_event.wait()
 
@@ -74,7 +64,7 @@ async def test_demo_commands(hass, aioclient_mock):
         allow_no_value=True, strict=False, delimiters=["="]
     )
 
-    parser.optionxform = lambda x: str(x)  # case sensitive
+    parser.optionxform = str  # case sensitive
     parser.read_string(aioclient_mock.mock_calls[0][2])
 
     # Ensure that commands for all default intents were generated
@@ -123,8 +113,6 @@ async def test_clean_name(hass, aioclient_mock):
         async_setup_component(hass, "rhasspy", config),
     )
 
-    provider = hass.data[DOMAIN]
-
     # Wait for training to complete
     await train_event.wait()
 
@@ -136,7 +124,7 @@ async def test_clean_name(hass, aioclient_mock):
         allow_no_value=True, strict=False, delimiters=["="]
     )
 
-    parser.optionxform = lambda x: str(x)  # case sensitive
+    parser.optionxform = str  # case sensitive
     parser.read_string(aioclient_mock.mock_calls[0][2])
 
     # Check that intents were generated for automation
@@ -175,8 +163,6 @@ async def test_include_domains(hass, aioclient_mock):
         async_setup_component(hass, "rhasspy", config),
     )
 
-    provider = hass.data[DOMAIN]
-
     # Wait for training to complete
     await train_event.wait()
 
@@ -188,7 +174,7 @@ async def test_include_domains(hass, aioclient_mock):
         allow_no_value=True, strict=False, delimiters=["="]
     )
 
-    parser.optionxform = lambda x: str(x)  # case sensitive
+    parser.optionxform = str  # case sensitive
     parser.read_string(aioclient_mock.mock_calls[0][2])
 
     # Verify that commands were only generated for HassTurnOn

@@ -8,7 +8,6 @@ import logging
 from typing import Dict, Iterable, Set
 
 import attr
-import pydash
 
 from homeassistant.core import State
 from homeassistant.helpers.template import Template
@@ -147,7 +146,7 @@ def _command_object_to_sentences(
 
         for entity_id, info in entities.items():
             if (len(include_domains) == 0) or (info.state.domain in include_domains):
-                if not info.state.domain in intent_exclude_domains:
+                if info.state.domain not in intent_exclude_domains:
                     speech_name_lower = info.speech_name.lower()
                     if speech_name_lower not in used_names:
                         possible_entity_ids.add(entity_id)

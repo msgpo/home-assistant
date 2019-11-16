@@ -27,7 +27,7 @@ class RhasspyConversationAgent(ABC):
         """Initialize the conversation agent."""
         self.hass = hass
         self.intent_url = intent_url
-        self.params = params = {"nohass": "true"}
+        self.params = {"nohass": "true"}
 
     async def async_process(self, text: str) -> intent.IntentResponse:
         """Process a sentence."""

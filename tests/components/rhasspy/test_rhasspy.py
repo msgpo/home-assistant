@@ -4,7 +4,6 @@ Tests for Rhasspy voice assistant integration.
 For more details about this integration, please refer to the documentation at
 https://home-assistant.io/integrations/rhasspy/
 """
-from homeassistant.helpers import intent
 from homeassistant.components.rhasspy import RhasspyProvider
 from homeassistant.components.rhasspy.const import (
     CONF_CUSTOM_WORDS,
@@ -16,7 +15,9 @@ from homeassistant.components.rhasspy.const import (
     KEY_COMMAND,
     SERVICE_TRAIN,
 )
+from homeassistant.helpers import intent
 from homeassistant.setup import async_setup_component
+
 
 async def test_setup_component(hass):
     """Test setup component."""
@@ -76,6 +77,7 @@ async def test_conversation(hass, aioclient_mock):
 
     # Register handler for test intent
     class TestIntent(intent.IntentHandler):
+        """Handle TestIntent by setting a boolean."""
         intent_type = test_intent
 
         def __init__(self):
