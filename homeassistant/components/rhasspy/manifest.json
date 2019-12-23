@@ -1,0 +1,8 @@
+{
+    "domain": "rhasspy",
+    "name": "rhasspy",
+    "documentation": "https://www.home-assistant.io/integrations/rhasspy",
+    "requirements": ["rhasspy-client==1.0.0"],
+    "dependencies": [],
+    "codeowners": []
+}
